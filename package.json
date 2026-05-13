@@ -1,0 +1,114 @@
+{
+  "name": "adb-mirror",
+  "displayName": "ADB Mirror",
+  "description": "Mirror Android devices directly in VS Code using scrcpy",
+  "version": "1.0.0",
+  "publisher": "your-publisher-name",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "adbMirror.refreshDevices",
+        "title": "Refresh Devices",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "adbMirror.startMirror",
+        "title": "Start Mirror",
+        "icon": "$(play)"
+      },
+      {
+        "command": "adbMirror.stopMirror",
+        "title": "Stop Mirror",
+        "icon": "$(stop)"
+      },
+      {
+        "command": "adbMirror.sendHome",
+        "title": "Home",
+        "icon": "$(home)"
+      },
+      {
+        "command": "adbMirror.sendBack",
+        "title": "Back",
+        "icon": "$(arrow-left)"
+      },
+      {
+        "command": "adbMirror.sendVolumeUp",
+        "title": "Volume Up",
+        "icon": "$(chevron-up)"
+      },
+      {
+        "command": "adbMirror.sendVolumeDown",
+        "title": "Volume Down",
+        "icon": "$(chevron-down)"
+      },
+      {
+        "command": "adbMirror.sendPower",
+        "title": "Power",
+        "icon": "$(lightbulb)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "adbMirrorContainer",
+          "title": "ADB Mirror",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "adbMirrorContainer": [
+        {
+          "id": "adbMirrorDevices",
+          "name": "Devices"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "adbMirror.refreshDevices",
+          "when": "view == adbMirrorDevices",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "adbMirror.startMirror",
+          "when": "view == adbMirrorDevices && viewItem == device",
+          "group": "inline"
+        },
+        {
+          "command": "adbMirror.stopMirror",
+          "when": "view == adbMirrorDevices && viewItem == device",
+          "group": "inline"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.80.0",
+    "@typescript-eslint/eslint-plugin": "^5.59.0",
+    "@typescript-eslint/parser": "^5.59.0",
+    "eslint": "^8.41.0",
+    "typescript": "^5.0.4"
+  }
+}
