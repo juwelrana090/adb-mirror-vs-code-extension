@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(code --list-extensions)",
+      "Bash(ls -la \"/c/Dev/scrcpy/scrcpy.exe\")",
+      "Read(//c/Dev/scrcpy/**)",
+      "Bash(\"/c/Dev/scrcpyv2.4/scrcpy.exe\" --help)",
+      "WebSearch"
     ]
   }
 }

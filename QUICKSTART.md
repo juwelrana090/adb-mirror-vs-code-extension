@@ -7,25 +7,29 @@ Your VS Code extension has been created and compiled. Here's what you need to do
 ### 🚀 Installation & Setup
 
 1. **Install Prerequisites**
+
    ```bash
    # Install ADB (if not already installed)
    # Download from: https://developer.android.com/studio/releases/platform-tools
-   
+
    # Install scrcpy (Windows)
    winget install genymobile.scrcpy
-   
+
    # Verify installations
    adb --version
    scrcpy --version
    ```
 
 2. **Check scrcpy MJPEG Support**
+
    ```bash
    scrcpy --help | findstr mjpeg
    ```
+
    If `--mjpeg-server` flag doesn't exist, the extension will try a fallback mode.
 
 3. **Install Extension Dependencies** (Already done ✅)
+
    ```bash
    npm install
    ```
@@ -38,6 +42,7 @@ Your VS Code extension has been created and compiled. Here's what you need to do
 ### 🎯 How to Use
 
 **Option 1: Debug Mode (Recommended for testing)**
+
 1. Open this project in VS Code
 2. Press `F5` to launch a new VS Code window with the extension loaded
 3. Connect your Android device with USB debugging enabled
@@ -45,6 +50,7 @@ Your VS Code extension has been created and compiled. Here's what you need to do
 5. Click on a device to start mirroring
 
 **Option 2: Package and Install**
+
 1. Install vsce: `npm install -g @vscode/vsce`
 2. Package: `vsce package`
 3. Install the `.vsix` file in VS Code
@@ -66,16 +72,19 @@ Your VS Code extension has been created and compiled. Here's what you need to do
 ### 🔧 Troubleshooting
 
 **"No devices found"**
+
 - Enable USB debugging on device
 - Authorize computer on device
 - Check `adb devices` in terminal
 
 **"Failed to start scrcpy"**
+
 - Verify scrcpy installation
 - Check scrcpy is in PATH
 - Try running scrcpy manually first
 
 **Screen not displaying**
+
 - scrcpy version may not support MJPEG
 - Check firewall/antivirus settings
 - Try alternative connection methods
@@ -99,6 +108,7 @@ adb-mirror/
 ### 🎨 Customization
 
 To modify scrcpy settings, edit `src/mirrorPanel.ts`:
+
 - Change MJPEG port: modify `port` property
 - Adjust video quality: modify `--max-size` argument
 - Add more flags: add to `args` array in `startScrcpy()`
@@ -124,3 +134,15 @@ To modify scrcpy settings, edit `src/mirrorPanel.ts`:
 **Dependencies**: ✅ Installed
 
 Enjoy mirroring your Android devices in VS Code! 📱🖥️
+
+# Install scoop if not already installed
+
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
+
+# Install scrcpy 2.x via scoop
+
+scoop bucket add extras
+scoop install scrcpy-legacy
+
+$env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "User")

@@ -1,0 +1,5 @@
+{
+  "adbMirror.scrcpyPath": "C:\\Dev\\scrcpyv2.4\\scrcpy.exe",
+  "adbMirror.adbFrameIntervalMs": 20,
+  "adbMirror.scrcpyMaxFps": 120
+}

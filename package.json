@@ -15,6 +15,42 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "ADB Mirror",
+      "properties": {
+        "adbMirror.scrcpyPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional absolute path to the scrcpy executable. Leave empty to auto-detect from PATH/common install locations."
+        },
+        "adbMirror.adbFrameIntervalMs": {
+          "type": "number",
+          "default": 80,
+          "minimum": 20,
+          "maximum": 500,
+          "description": "ADB screenshot fallback frame interval in milliseconds. Lower is faster but uses more CPU."
+        },
+        "adbMirror.scrcpyMaxSize": {
+          "type": "number",
+          "default": 720,
+          "minimum": 360,
+          "maximum": 1600,
+          "description": "Maximum video size passed to scrcpy. Lower values usually improve speed and reduce latency."
+        },
+        "adbMirror.scrcpyMaxFps": {
+          "type": "number",
+          "default": 60,
+          "minimum": 15,
+          "maximum": 120,
+          "description": "Maximum frame rate requested from scrcpy."
+        },
+        "adbMirror.scrcpyVideoBitRate": {
+          "type": "string",
+          "default": "8M",
+          "description": "Video bitrate passed to scrcpy (for example: 4M, 8M, 12M)."
+        }
+      }
+    },
     "commands": [
       {
         "command": "adbMirror.refreshDevices",
@@ -70,7 +106,8 @@
       "adbMirrorContainer": [
         {
           "id": "adbMirrorDevices",
-          "name": "Devices"
+          "name": "Devices",
+          "icon": "$(device-mobile)"
         }
       ]
     },
@@ -78,6 +115,7 @@
       "view/title": [
         {
           "command": "adbMirror.refreshDevices",
+          "icon": "$(refresh)",
           "when": "view == adbMirrorDevices",
           "group": "navigation"
         }
@@ -85,11 +123,13 @@
       "view/item/context": [
         {
           "command": "adbMirror.startMirror",
+          "icon": "$(play)",
           "when": "view == adbMirrorDevices && viewItem == device",
           "group": "inline"
         },
         {
           "command": "adbMirror.stopMirror",
+          "icon": "$(stop)",
           "when": "view == adbMirrorDevices && viewItem == device",
           "group": "inline"
         }

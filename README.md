@@ -48,11 +48,13 @@ scrcpy --help | grep mjpeg
 ### Install in VS Code
 
 **Method 1: From Source**
+
 1. Open VS Code
 2. Press `F5` to launch a new Extension Development Host window
 3. The extension will be active in the new window
 
 **Method 2: Package and Install**
+
 1. Install vsce: `npm install -g @vscode/vsce`
 2. Package: `vsce package`
 3. Install the `.vsix` file in VS Code
@@ -76,22 +78,36 @@ scrcpy --help | grep mjpeg
 ## Troubleshooting
 
 ### "No devices found"
+
 - Make sure USB debugging is enabled on your device
 - Try `adb devices` in terminal to verify ADB can see your device
 - Check that you have authorized the computer on your device
 
 ### "Failed to start scrcpy"
+
 - Verify scrcpy is installed: `scrcpy --version`
 - Check if scrcpy is in your system PATH
 - Try running scrcpy manually first to ensure it works
 
 ### Screen not displaying / Connection issues
+
 - Your scrcpy version may not support `--mjpeg-server` flag
 - Check scrcpy help for available flags
 - You may need to modify the `startScrcpy()` method in `mirrorPanel.ts`
 - Try running `scrcpy --help` to see available options in your version
 
+### Mirror is working but too slow
+
+- Prefer scrcpy mode for best speed (install scrcpy and ensure it is in PATH)
+- Open VS Code Settings and tune these extension options:
+  - `adbMirror.scrcpyMaxSize` (try `720` or `540` for lower latency)
+  - `adbMirror.scrcpyMaxFps` (try `60`)
+  - `adbMirror.scrcpyVideoBitRate` (try `8M` to `12M`)
+  - `adbMirror.adbFrameIntervalMs` (fallback mode only; try `50`-`80`)
+- If using fallback mode, lower interval values increase speed but also CPU usage
+
 ### ADB not found
+
 - Make sure ADB is installed and in your system PATH
 - On Windows, ADB is typically part of Android SDK Platform-Tools
 
