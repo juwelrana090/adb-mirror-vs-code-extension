@@ -856,7 +856,6 @@ export class MirrorSession {
 export class MirrorViewProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
   private session: MirrorSession | undefined;
-  private nativeScrcpyProcess: ReturnType<typeof spawn> | undefined;
 
   constructor(private readonly extensionUri: vscode.Uri) {}
 
@@ -896,17 +895,9 @@ export class MirrorViewProvider implements vscode.WebviewViewProvider {
   async startMirror(serial: string): Promise<void> {
     this.stopSession();
 
-    const launched = await this.launchNativeScrcpy(serial);
-    if (launched) {
-      vscode.window.showInformationMessage(
-        `Native scrcpy started for device: ${serial}`,
-      );
-      return;
-    }
-
     if (!this.view) {
       vscode.window.showErrorMessage(
-        "scrcpy is unavailable and Mirror view is not ready. Open ADB Mirror side panel and try again.",
+        "Mirror view is not ready. Open the ADB Mirror side panel and try again.",
       );
       return;
     }
@@ -914,20 +905,12 @@ export class MirrorViewProvider implements vscode.WebviewViewProvider {
     this.view.show();
     this.session = new MirrorSession(serial, this.view.webview);
     await this.session.start();
-    vscode.window.showWarningMessage(
-      `scrcpy unavailable, using in-editor fallback mirror for device: ${serial}`,
-    );
   }
 
   stopSession(): void {
     if (this.session) {
       this.session.dispose();
       this.session = undefined;
-    }
-
-    if (this.nativeScrcpyProcess) {
-      this.nativeScrcpyProcess.kill();
-      this.nativeScrcpyProcess = undefined;
     }
   }
 
@@ -954,119 +937,6 @@ export class MirrorViewProvider implements vscode.WebviewViewProvider {
     }
 
     this.view.webview.html = this.getWebviewContent(this.view.webview);
-  }
-
-  private async launchNativeScrcpy(serial: string): Promise<boolean> {
-    const scrcpyCommand = await this.resolveScrcpyCommand();
-    const config = vscode.workspace.getConfiguration("adbMirror");
-    const scrcpyMaxSize = Math.max(
-      360,
-      Math.min(1600, Number(config.get<number>("scrcpyMaxSize", 720))),
-    );
-    const scrcpyMaxFps = Math.max(
-      15,
-      Math.min(240, Number(config.get<number>("scrcpyMaxFps", 60))),
-    );
-    const scrcpyVideoBitRate = (
-      config.get<string>("scrcpyVideoBitRate", "8M") || "8M"
-    ).trim();
-
-    const args = [
-      "-s",
-      serial,
-      "--no-audio",
-      "--stay-awake",
-      "--no-clipboard",
-      "--max-size",
-      String(scrcpyMaxSize),
-      "--max-fps",
-      String(scrcpyMaxFps),
-      "--video-bit-rate",
-      scrcpyVideoBitRate || "8M",
-      "--window-title",
-      `scrcpy realtime: ${serial}`,
-    ];
-
-    try {
-      if (this.nativeScrcpyProcess) {
-        this.nativeScrcpyProcess.kill();
-        this.nativeScrcpyProcess = undefined;
-      }
-
-      const child = spawn(scrcpyCommand, args, {
-        shell: false,
-        detached: false,
-        windowsHide: false,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-
-      let startupStderr = "";
-      child.stderr?.on("data", (chunk: Buffer | string) => {
-        startupStderr += String(chunk);
-      });
-
-      const started = await new Promise<boolean>((resolve) => {
-        let settled = false;
-
-        const finish = (ok: boolean) => {
-          if (settled) {
-            return;
-          }
-          settled = true;
-          resolve(ok);
-        };
-
-        child.on("error", (error) => {
-          vscode.window.showErrorMessage(
-            `Failed to launch native scrcpy: ${error.message}`,
-          );
-          finish(false);
-        });
-
-        child.on("close", (code) => {
-          if (settled) {
-            if (this.nativeScrcpyProcess === child) {
-              this.nativeScrcpyProcess = undefined;
-            }
-            return;
-          }
-
-          const details = startupStderr.trim();
-          const message = details
-            ? `scrcpy exited early (code ${String(code)}): ${details}`
-            : `scrcpy exited early (code ${String(code)}). Check adbMirror.scrcpyPath and USB/Wi-Fi ADB connection.`;
-          vscode.window.showErrorMessage(message);
-          finish(false);
-        });
-
-        setTimeout(() => {
-          this.nativeScrcpyProcess = child;
-          finish(true);
-        }, 1200);
-      });
-
-      if (!started) {
-        try {
-          child.kill();
-        } catch {
-          // no-op: process may already be closed.
-        }
-        return false;
-      }
-
-      child.on("close", () => {
-        if (this.nativeScrcpyProcess === child) {
-          this.nativeScrcpyProcess = undefined;
-        }
-      });
-
-      return true;
-    } catch (error) {
-      vscode.window.showErrorMessage(
-        `Could not start native scrcpy: ${String(error)}`,
-      );
-      return false;
-    }
   }
 
   private async resolveScrcpyCommand(): Promise<string> {
