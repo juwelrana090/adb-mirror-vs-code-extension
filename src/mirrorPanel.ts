@@ -1279,6 +1279,11 @@ export class MirrorPanel {
             color: var(--error);
         }
 
+        body.webview-only .toolbar,
+        body.webview-only .status-bar {
+            display: none !important;
+        }
+
         .fps-counter {
             font-family: 'SF Mono', Monaco, monospace;
             font-size: 11px;
@@ -1329,7 +1334,7 @@ export class MirrorPanel {
     <div class="app-container">
         <div class="stream-wrapper">
           <div class="stream-container" id="streamContainer">
-                <div class="device-badge">
+                <div class="device-badge" onclick="toggleWebviewOnly()" title="Toggle toolbar" style="cursor:pointer;">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
                         <line x1="12" y1="18" x2="12.01" y2="18"/>
@@ -1615,6 +1620,10 @@ export class MirrorPanel {
                 command: 'applyPreset',
                 preset: preset
             });
+        }
+
+        function toggleWebviewOnly() {
+            document.body.classList.toggle('webview-only');
         }
 
         function updatePresetButtons() {
