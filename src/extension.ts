@@ -1,9 +1,9 @@
 import * as vscode from "vscode";
 import { AdbDeviceProvider, AdbDeviceItem } from "./deviceProvider";
-import { MirrorPanel } from "./mirrorPanel";
+import { MirrorViewProvider } from "./mirrorViewProvider";
 
 let deviceProvider: AdbDeviceProvider;
-let currentMirror: MirrorPanel | undefined;
+let mirrorViewProvider: MirrorViewProvider;
 
 export function activate(context: vscode.ExtensionContext) {
   console.log("ADB Mirror extension is now active!");
@@ -11,11 +11,25 @@ export function activate(context: vscode.ExtensionContext) {
   // Create the device provider
   deviceProvider = new AdbDeviceProvider();
 
+  // Create the mirror view provider
+  mirrorViewProvider = new MirrorViewProvider(context.extensionUri);
+
   // Register the tree data provider
   const treeView = vscode.window.createTreeView("adbMirrorDevices", {
     treeDataProvider: deviceProvider,
     showCollapseAll: false,
   });
+
+  // Register the webview view provider for the sidebar mirror
+  vscode.window.registerWebviewViewProvider(
+    "adbMirrorView",
+    mirrorViewProvider,
+    {
+      webviewOptions: {
+        retainContextWhenHidden: true,
+      },
+    },
+  );
 
   // Register commands
   context.subscriptions.push(
@@ -40,37 +54,44 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("adbMirror.stopMirror", () => {
-      stopMirror();
+      mirrorViewProvider.stopSession();
+      vscode.window.showInformationMessage("Mirror stopped");
     }),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("adbMirror.sendHome", () => {
-      void sendKeyEvent(3);
+      void mirrorViewProvider.sendKeyEvent(3);
     }),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("adbMirror.sendBack", () => {
-      void sendKeyEvent(4);
+      void mirrorViewProvider.sendKeyEvent(4);
     }),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("adbMirror.sendVolumeUp", () => {
-      void sendKeyEvent(24);
+      void mirrorViewProvider.sendKeyEvent(24);
     }),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("adbMirror.sendVolumeDown", () => {
-      void sendKeyEvent(25);
+      void mirrorViewProvider.sendKeyEvent(25);
     }),
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("adbMirror.sendPower", () => {
-      void sendKeyEvent(26);
+      void mirrorViewProvider.sendKeyEvent(26);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("adbMirror.realtimeMode", () => {
+      void mirrorViewProvider.applyPreset("realtime");
     }),
   );
 
@@ -82,53 +103,19 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 async function startMirror(serial: string): Promise<void> {
-  if (currentMirror) {
-    vscode.window.showWarningMessage(
-      "Another mirror session is already active",
-    );
-    return;
-  }
-
   try {
-    currentMirror = new MirrorPanel(serial, () => {
-      currentMirror = undefined;
-    });
-    await currentMirror.show();
-
-    vscode.window.showInformationMessage(
-      `Mirror started for device: ${serial}`,
-    );
+    await mirrorViewProvider.startMirror(serial);
   } catch (error) {
     vscode.window.showErrorMessage(`Failed to start mirror: ${error}`);
-    currentMirror = undefined;
   }
-}
-
-function stopMirror(): void {
-  if (currentMirror) {
-    currentMirror.dispose();
-    currentMirror = undefined;
-    vscode.window.showInformationMessage("Mirror stopped");
-  } else {
-    vscode.window.showInformationMessage("No active mirror session");
-  }
-}
-
-async function sendKeyEvent(keyCode: number): Promise<void> {
-  if (!currentMirror) {
-    vscode.window.showInformationMessage("No active mirror session");
-    return;
-  }
-
-  await currentMirror.sendKeyEvent(keyCode);
 }
 
 export function deactivate() {
-  if (currentMirror) {
-    currentMirror.dispose();
-  }
-
   if (deviceProvider) {
     deviceProvider.dispose();
+  }
+
+  if (mirrorViewProvider) {
+    mirrorViewProvider.dispose();
   }
 }

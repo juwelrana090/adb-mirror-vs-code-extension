@@ -1,5 +1,8 @@
 {
-  "adbMirror.scrcpyPath": "C:\\Dev\\scrcpyv2.4\\scrcpy.exe",
-  "adbMirror.adbFrameIntervalMs": 20,
-  "adbMirror.scrcpyMaxFps": 120
+  "adbMirror.scrcpyPath": "C:\\Users\\juwel\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Genymobile.scrcpy_Microsoft.Winget.Source_8wekyb3d8bbwe\\scrcpy-win64-v3.3.4\\scrcpy.exe",
+  "adbMirror.adbFrameIntervalMs": 30,
+  "adbMirror.scrcpyMaxFps": 160,
+  "adbMirror.scrcpyMaxSize": 1080,
+  "adbMirror.scrcpyVideoBitRate": "1M",
+  "adbMirror.performancePreset": "light"
 }

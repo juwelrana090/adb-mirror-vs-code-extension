@@ -6,7 +6,11 @@
       "Bash(ls -la \"/c/Dev/scrcpy/scrcpy.exe\")",
       "Read(//c/Dev/scrcpy/**)",
       "Bash(\"/c/Dev/scrcpyv2.4/scrcpy.exe\" --help)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(ls -la \"C:/Users/juwel/AppData/local/Microsoft/WinGet/Links/scrcpy.exe\" 2>/dev/null || echo \"File not found\")",
+      "Read(//c/Users/juwel/AppData/local/Microsoft/WinGet/Links/**)",
+      "Bash(find \"/c/Program Files\" -name \"scrcpy.exe\" 2>/dev/null | head -5)",
+      "Read(//c/Program Files/**)"
     ]
   }
 }

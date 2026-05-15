@@ -45,8 +45,7 @@ const PERFORMANCE_PRESETS: Record<PerformancePreset, PerformanceConfig> = {
   quality: { maxSize: 1080, maxFps: 30, bitRate: "8M", label: "High Quality" },
 };
 
-export class MirrorPanel {
-  private panel: vscode.WebviewPanel | undefined;
+export class MirrorSession {
   private scrcpyProcess: ReturnType<typeof spawn> | undefined;
   private frameTimer: NodeJS.Timeout | undefined;
   private frameInFlight = false;
@@ -57,16 +56,16 @@ export class MirrorPanel {
   private scrcpyCommand = "scrcpy";
   private readonly serial: string;
   private readonly port: number = 27183;
-  private readonly onDispose?: () => void;
+  private webview: vscode.Webview;
   private adbFrameIntervalMs = 30;
   private scrcpyMaxSize = 720;
   private scrcpyMaxFps = 60;
   private scrcpyVideoBitRate = "4M";
   private currentPreset: PerformancePreset = "realtime";
 
-  constructor(serial: string, onDispose?: () => void) {
+  constructor(serial: string, webview: vscode.Webview) {
     this.serial = serial;
-    this.onDispose = onDispose;
+    this.webview = webview;
     this.loadPerformanceConfig();
   }
 
@@ -93,59 +92,35 @@ export class MirrorPanel {
     this.scrcpyVideoBitRate = configuredBitRate || "8M";
   }
 
-  async show(): Promise<void> {
-    if (this.panel) {
-      this.panel.reveal();
-      return;
+  async start(): Promise<void> {
+    this.stopBackends();
+
+    this.scrcpyCommand = await this.resolveScrcpyCommand();
+
+    const support = await this.getScrcpySupport();
+
+    if (support.installed && support.mjpegSupported) {
+      try {
+        await this.startScrcpyMjpeg();
+        return;
+      } catch (error) {
+        this.notifyWebview(
+          "status",
+          `scrcpy MJPEG failed, falling back to ADB screenshots: ${String(error)}`,
+        );
+      }
     }
 
-    this.panel = vscode.window.createWebviewPanel(
-      "adbMirror",
-      `Mirror: ${this.serial}`,
-      vscode.ViewColumn.Beside,
-      {
-        enableScripts: true,
-        retainContextWhenHidden: true,
-      },
-    );
+    let reason: string;
+    if (!support.installed) {
+      reason = "scrcpy not found. Using ADB screenshot fallback.";
+    } else if (!support.mjpegSupported) {
+      reason = `scrcpy ${support.version} has no --mjpeg-server. Using ADB screenshot fallback.`;
+    } else {
+      reason = "Using ADB screenshot fallback.";
+    }
 
-    this.panel.webview.html = this.getWebviewContent();
-    this.panel.webview.onDidReceiveMessage(async (message) => {
-      switch (message.command) {
-        case "sendKeyEvent":
-          await this.sendKeyEvent(Number(message.keyCode));
-          break;
-        case "refreshStream":
-          if (this.streamMode === "adb-screencap") {
-            await this.pushSingleFrame();
-          }
-          break;
-        case "stopMirror":
-          this.dispose();
-          break;
-        case "sendTap":
-          await this.sendTap(
-            Number(message.normalizedX),
-            Number(message.normalizedY),
-          );
-          break;
-        case "sendSwipe":
-          await this.sendSwipe(
-            Number(message.startX),
-            Number(message.startY),
-            Number(message.endX),
-            Number(message.endY),
-            Number(message.durationMs),
-          );
-          break;
-        case "applyPreset":
-          await this.applyPreset(message.preset as PerformancePreset);
-          break;
-      }
-    });
-    this.panel.onDidDispose(() => this.dispose(false));
-
-    await this.startStreaming();
+    await this.startAdbScreencapStream(reason);
   }
 
   async sendKeyEvent(keyCode: number): Promise<void> {
@@ -269,35 +244,35 @@ export class MirrorPanel {
     }
   }
 
-  private async startStreaming(): Promise<void> {
-    this.stopBackends();
-
-    this.scrcpyCommand = await this.resolveScrcpyCommand();
-
-    const support = await this.getScrcpySupport();
-
-    if (support.installed && support.mjpegSupported) {
-      try {
-        await this.startScrcpyMjpeg();
-        return;
-      } catch (error) {
-        this.notifyWebview(
-          "status",
-          `scrcpy MJPEG failed, falling back to ADB screenshots: ${String(error)}`,
+  handleMessage(message: any): void {
+    switch (message.command) {
+      case "sendKeyEvent":
+        void this.sendKeyEvent(Number(message.keyCode));
+        break;
+      case "refreshStream":
+        if (this.streamMode === "adb-screencap") {
+          void this.pushSingleFrame();
+        }
+        break;
+      case "sendTap":
+        void this.sendTap(
+          Number(message.normalizedX),
+          Number(message.normalizedY),
         );
-      }
+        break;
+      case "sendSwipe":
+        void this.sendSwipe(
+          Number(message.startX),
+          Number(message.startY),
+          Number(message.endX),
+          Number(message.endY),
+          Number(message.durationMs),
+        );
+        break;
+      case "applyPreset":
+        void this.applyPreset(message.preset as PerformancePreset);
+        break;
     }
-
-    let reason: string;
-    if (!support.installed) {
-      reason = "scrcpy not found. Using ADB screenshot fallback.";
-    } else if (!support.mjpegSupported) {
-      reason = `scrcpy ${support.version} has no --mjpeg-server. Using ADB screenshot fallback.`;
-    } else {
-      reason = "Using ADB screenshot fallback.";
-    }
-
-    await this.startAdbScreencapStream(reason);
   }
 
   private async startScrcpyMjpeg(): Promise<void> {
@@ -395,7 +370,7 @@ export class MirrorPanel {
 
     // Restart streaming with new settings
     if (this.streamMode === "scrcpy-mjpeg") {
-      await this.startStreaming();
+      await this.start();
     }
   }
 
@@ -444,7 +419,6 @@ export class MirrorPanel {
           timeout: 1500,
         },
         (res) => {
-          // Any HTTP response means the endpoint is reachable.
           res.resume();
           resolve(Boolean(res.statusCode));
         },
@@ -586,8 +560,6 @@ export class MirrorPanel {
   private async pushSingleFrame(): Promise<void> {
     if (
       this.frameInFlight ||
-      !this.panel ||
-      !this.panel.visible ||
       this.streamMode !== "adb-screencap"
     ) {
       return;
@@ -661,12 +633,8 @@ export class MirrorPanel {
     type: string,
     payload: Record<string, unknown> | string,
   ): void {
-    if (!this.panel) {
-      return;
-    }
-
     const data = typeof payload === "string" ? { message: payload } : payload;
-    void this.panel.webview.postMessage({ type, ...data });
+    void this.webview.postMessage({ type, ...data });
   }
 
   private stopBackends(): void {
@@ -683,7 +651,108 @@ export class MirrorPanel {
     this.streamMode = "unknown";
   }
 
-  private getWebviewContent(): string {
+  dispose(): void {
+    if (this.isDisposed) {
+      return;
+    }
+    this.isDisposed = true;
+
+    this.stopBackends();
+  }
+}
+
+export class MirrorViewProvider implements vscode.WebviewViewProvider {
+  private view: vscode.WebviewView | undefined;
+  private session: MirrorSession | undefined;
+
+  constructor(private readonly extensionUri: vscode.Uri) {}
+
+  resolveWebviewView(
+    webviewView: vscode.WebviewView,
+    context: vscode.WebviewViewResolveContext<unknown>,
+    _token: vscode.CancellationToken,
+  ): void | Thenable<void> {
+    this.view = webviewView;
+
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, "media")],
+    };
+
+    webviewView.webview.html = this.getWebviewContent(webviewView.webview);
+
+    webviewView.webview.onDidReceiveMessage(async (message) => {
+      if (this.session) {
+        this.session.handleMessage(message);
+      }
+
+      switch (message.command) {
+        case "stopMirror":
+          this.stopSession();
+          break;
+      }
+    });
+
+    webviewView.onDidChangeVisibility(() => {
+      if (webviewView.visible) {
+        void this.showWelcome();
+      }
+    });
+  }
+
+  async startMirror(serial: string): Promise<void> {
+    if (!this.view) {
+      vscode.window.showErrorMessage("Mirror view not available");
+      return;
+    }
+
+    this.stopSession();
+
+    // Show the view in the activity bar
+    this.view.show();
+
+    this.session = new MirrorSession(serial, this.view.webview);
+    await this.session.start();
+
+    vscode.window.showInformationMessage(
+      `Mirror started for device: ${serial}`,
+    );
+  }
+
+  stopSession(): void {
+    if (this.session) {
+      this.session.dispose();
+      this.session = undefined;
+    }
+  }
+
+  async sendKeyEvent(keyCode: number): Promise<void> {
+    if (this.session) {
+      await this.session.sendKeyEvent(keyCode);
+    } else {
+      vscode.window.showInformationMessage("No active mirror session");
+    }
+  }
+
+  async applyPreset(preset: PerformancePreset): Promise<void> {
+    if (this.session) {
+      await this.session.applyPreset(preset);
+      vscode.window.showInformationMessage("Realtime mode activated");
+    } else {
+      vscode.window.showInformationMessage("No active mirror session");
+    }
+  }
+
+  private showWelcome(): void {
+    if (!this.view) {
+      return;
+    }
+
+    this.view.webview.html = this.getWebviewContent(this.view.webview);
+  }
+
+  private getWebviewContent(webview: vscode.Webview): string {
+    const port = 27183;
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -733,6 +802,7 @@ export class MirrorPanel {
             align-items: center;
             justify-content: center;
             background: #000;
+            min-height: 0;
         }
 
         .stream-container {
@@ -859,6 +929,27 @@ export class MirrorPanel {
         .loading-text {
             font-size: 13px;
             color: var(--text-secondary);
+        }
+
+        .welcome {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .welcome-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        .welcome-text {
+            color: var(--text-secondary);
+            font-size: 14px;
         }
 
         .toolbar {
@@ -1036,17 +1127,21 @@ export class MirrorPanel {
     <div class="app-container">
         <div class="stream-wrapper">
             <div class="stream-container">
-                <div class="device-badge">
+                <div class="device-badge" id="deviceBadge" style="display: none;">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
                         <line x1="12" y1="18" x2="12.01" y2="18"/>
                     </svg>
-                    <span>${this.serial}</span>
+                    <span id="deviceSerial"></span>
                     <span class="status-indicator connecting" id="statusIndicator"></span>
                 </div>
-                <div class="loading">
+                <div class="loading" id="loadingDiv">
                     <div class="spinner"></div>
                     <span class="loading-text">Connecting to device...</span>
+                </div>
+                <div class="welcome" id="welcomeDiv" style="display: none;">
+                    <div class="welcome-icon">📱</div>
+                    <div class="welcome-text">Select a device from the Devices list to start mirroring</div>
                 </div>
                 <img id="stream" style="display: none;" alt="Device screen" />
                 <div id="touchCursor"></div>
@@ -1123,14 +1218,6 @@ export class MirrorPanel {
             </div>
 
             <div class="toolbar-group">
-                <button class="icon-btn" onclick="refreshStream()" title="Refresh">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="23 4 23 10 17 10"/>
-                        <polyline points="1 20 1 14 7 14"/>
-                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-                    </svg>
-                    <span class="tooltip">Refresh Stream</span>
-                </button>
                 <button class="icon-btn danger" onclick="stopMirror()" title="Stop">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
@@ -1141,7 +1228,7 @@ export class MirrorPanel {
         </div>
 
         <div class="status-bar" id="statusBar">
-            <span id="statusText">Initializing...</span>
+            <span id="statusText">Select a device to start mirroring</span>
             <span class="fps-counter" id="fpsCounter" style="display: none;"></span>
         </div>
     </div>
@@ -1152,11 +1239,14 @@ export class MirrorPanel {
         const statusText = document.getElementById('statusText');
         const statusBar = document.getElementById('statusBar');
         const statusIndicator = document.getElementById('statusIndicator');
-        const loadingDiv = document.querySelector('.loading');
+        const loadingDiv = document.getElementById('loadingDiv');
+        const welcomeDiv = document.getElementById('welcomeDiv');
         const touchCursor = document.getElementById('touchCursor');
         const fpsCounter = document.getElementById('fpsCounter');
+        const deviceBadge = document.getElementById('deviceBadge');
+        const deviceSerial = document.getElementById('deviceSerial');
         let backendMode = 'unknown';
-        let streamPort = ${this.port};
+        let streamPort = ${port};
         let retryCount = 0;
         const maxRetries = 10;
         let isConnected = false;
@@ -1164,6 +1254,10 @@ export class MirrorPanel {
         let currentPreset = 'realtime';
         let frameCount = 0;
         let lastFpsUpdate = Date.now();
+
+        // Show welcome by default
+        loadingDiv.style.display = 'none';
+        welcomeDiv.style.display = 'flex';
 
         stream.onload = () => {
           if (backendMode === 'scrcpy-mjpeg') {
@@ -1202,9 +1296,12 @@ export class MirrorPanel {
             case 'backend':
               backendMode = message.mode || 'unknown';
               streamPort = message.port || streamPort;
+              loadingDiv.style.display = 'none';
+              welcomeDiv.style.display = 'none';
+              deviceBadge.style.display = 'flex';
+              statusIndicator.className = 'status-indicator connecting';
               if (backendMode === 'scrcpy-mjpeg') {
                 statusText.textContent = 'Starting stream...';
-                statusIndicator.className = 'status-indicator connecting';
                 loadScrcpyStream();
               } else if (backendMode === 'adb-screencap') {
                 statusText.textContent = 'ADB screenshot mode';
@@ -1214,9 +1311,10 @@ export class MirrorPanel {
               break;
             case 'frame':
               if (message.dataUrl) {
+                loadingDiv.style.display = 'none';
+                welcomeDiv.style.display = 'none';
                 stream.src = message.dataUrl;
                 stream.style.display = 'block';
-                loadingDiv.style.display = 'none';
                 isConnected = true;
                 frameCount++;
               }
@@ -1253,7 +1351,6 @@ export class MirrorPanel {
             const timestamp = new Date().getTime();
             stream.src = \`http://localhost:\${streamPort}/?\${timestamp}\`;
             stream.style.display = 'block';
-            loadingDiv.style.display = 'none';
         }
 
         function sendKeyEvent(code) {
@@ -1261,20 +1358,6 @@ export class MirrorPanel {
                 command: 'sendKeyEvent',
                 keyCode: code
             });
-        }
-
-        function refreshStream() {
-            if (backendMode === 'scrcpy-mjpeg') {
-                statusText.textContent = 'Refreshing...';
-                statusIndicator.className = 'status-indicator connecting';
-                retryCount = 0;
-                isConnected = false;
-                loadScrcpyStream();
-            } else {
-                vscode.postMessage({
-                    command: 'refreshStream'
-                });
-            }
         }
 
         function stopMirror() {
@@ -1407,23 +1490,7 @@ export class MirrorPanel {
 </html>`;
   }
 
-  dispose(disposePanel: boolean = true): void {
-    if (this.isDisposed) {
-      return;
-    }
-    this.isDisposed = true;
-
-    this.stopBackends();
-
-    const currentPanel = this.panel;
-    this.panel = undefined;
-
-    if (disposePanel && currentPanel) {
-      currentPanel.dispose();
-    }
-
-    if (this.onDispose) {
-      this.onDispose();
-    }
+  dispose(): void {
+    this.stopSession();
   }
 }
