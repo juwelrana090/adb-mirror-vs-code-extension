@@ -10,7 +10,9 @@
       "Bash(ls -la \"C:/Users/juwel/AppData/local/Microsoft/WinGet/Links/scrcpy.exe\" 2>/dev/null || echo \"File not found\")",
       "Read(//c/Users/juwel/AppData/local/Microsoft/WinGet/Links/**)",
       "Bash(find \"/c/Program Files\" -name \"scrcpy.exe\" 2>/dev/null | head -5)",
-      "Read(//c/Program Files/**)"
+      "Read(//c/Program Files/**)",
+      "Bash(where scrcpy *)",
+      "Bash(\"/c/Users/juwel/AppData/Local/Microsoft/WinGet/Packages/Genymobile.scrcpy_Microsoft.Winget.Source_8wekyb3d8bbwe/scrcpy-win64-v3.3.4/scrcpy.exe\" --version)"
     ]
   }
 }

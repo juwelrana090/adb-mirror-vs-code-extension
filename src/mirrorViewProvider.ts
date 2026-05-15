@@ -506,6 +506,8 @@ export class MirrorSession {
       .get<string>("scrcpyPath", "")
       .trim();
 
+    console.log("ADB Mirror: scrcpyPath from config =", configPath);
+
     if (configPath) {
       return configPath;
     }
