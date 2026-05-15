@@ -33,7 +33,7 @@ export function activate(context: vscode.ExtensionContext) {
   });
   context.subscriptions.push(treeView);
 
-  // Register the webview view provider for the sidebar mirror
+  // Register the webview view provider for sidebar mirror fallback
   webviewViewRegistration?.dispose();
   webviewViewRegistration = vscode.window.registerWebviewViewProvider(
     "adbMirrorView",

@@ -6,7 +6,11 @@ import * as http from "http";
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 
-type StreamMode = "unknown" | "scrcpy-mjpeg" | "adb-screencap";
+type StreamMode =
+  | "unknown"
+  | "scrcpy-mjpeg"
+  | "adb-screencap"
+  | "scrcpy-native";
 type PerformancePreset =
   | "realtime"
   | "light"
@@ -31,25 +35,59 @@ interface PerformanceConfig {
   maxFps: number;
   bitRate: string;
   label: string;
+  adbFrameIntervalMs?: number;
+  adbCaptureTimeoutMs?: number;
 }
 
 const PERFORMANCE_PRESETS: Record<PerformancePreset, PerformanceConfig> = {
-  realtime: { maxSize: 360, maxFps: 120, bitRate: "2M", label: "Realtime" },
-  light: { maxSize: 480, maxFps: 30, bitRate: "1M", label: "Light" },
+  realtime: {
+    maxSize: 360,
+    maxFps: 120,
+    bitRate: "640K",
+    adbFrameIntervalMs: 12,
+    adbCaptureTimeoutMs: 1200,
+    label: "Realtime",
+  },
+  light: {
+    maxSize: 480,
+    maxFps: 30,
+    bitRate: "1M",
+    adbFrameIntervalMs: 30,
+    adbCaptureTimeoutMs: 2200,
+    label: "Light",
+  },
   ultraLowLatency: {
     maxSize: 480,
-    maxFps: 60,
-    bitRate: "2M",
+    maxFps: 90,
+    bitRate: "1500K",
+    adbFrameIntervalMs: 14,
+    adbCaptureTimeoutMs: 1400,
     label: "Ultra Fast",
   },
   maxSpeed: {
     maxSize: 360,
     maxFps: 120,
-    bitRate: "1M",
+    bitRate: "512K",
+    adbFrameIntervalMs: 10,
+    adbCaptureTimeoutMs: 1000,
     label: "Maximum Speed",
   },
-  balanced: { maxSize: 720, maxFps: 60, bitRate: "4M", label: "Balanced" },
-  quality: { maxSize: 1080, maxFps: 30, bitRate: "8M", label: "High Quality" },
+  balanced: {
+    maxSize: 720,
+    maxFps: 60,
+    bitRate: "4M",
+    adbFrameIntervalMs: 20,
+    adbCaptureTimeoutMs: 1800,
+    label: "Balanced",
+  },
+  quality: {
+    maxSize: 1080,
+    maxFps: 30,
+    bitRate: "8M",
+    adbFrameIntervalMs: 30,
+    adbCaptureTimeoutMs: 2500,
+    label: "High Quality",
+  },
 };
 
 export class MirrorPanel {
@@ -65,11 +103,15 @@ export class MirrorPanel {
   private readonly serial: string;
   private readonly port: number = 27183;
   private readonly onDispose?: () => void;
+  private defaultAdbFrameIntervalMs = 30;
+  private defaultAdbCaptureTimeoutMs = 1800;
   private adbFrameIntervalMs = 30;
+  private adbCaptureTimeoutMs = 1800;
   private scrcpyMaxSize = 720;
   private scrcpyMaxFps = 60;
   private scrcpyVideoBitRate = "4M";
   private currentPreset: PerformancePreset = "realtime";
+  private preferNativeLowLatency = true;
 
   constructor(serial: string, onDispose?: () => void) {
     this.serial = serial;
@@ -86,6 +128,21 @@ export class MirrorPanel {
     this.adbFrameIntervalMs = Math.max(
       10,
       Math.min(500, configuredFrameInterval),
+    );
+    this.defaultAdbFrameIntervalMs = this.adbFrameIntervalMs;
+
+    const configuredCaptureTimeout = Number(
+      config.get<number>("adbCaptureTimeoutMs", 1800),
+    );
+    this.adbCaptureTimeoutMs = Math.max(
+      800,
+      Math.min(6000, configuredCaptureTimeout),
+    );
+    this.defaultAdbCaptureTimeoutMs = this.adbCaptureTimeoutMs;
+
+    this.preferNativeLowLatency = config.get<boolean>(
+      "preferNativeLowLatency",
+      true,
     );
 
     const configuredMaxSize = Number(config.get<number>("scrcpyMaxSize", 720));
@@ -151,6 +208,9 @@ export class MirrorPanel {
         case "applyPreset":
           await this.applyPreset(message.preset as PerformancePreset);
           break;
+        case "openNativeScrcpy":
+          await this.launchNativeScrcpy(true);
+          break;
       }
     });
     this.panel.onDidDispose(() => this.dispose(false));
@@ -160,12 +220,13 @@ export class MirrorPanel {
 
   async sendKeyEvent(keyCode: number): Promise<void> {
     try {
-      await execAsync(
-        `adb -s "${this.serial}" shell input keyevent ${keyCode}`,
+      await execFileAsync(
+        "adb",
+        ["-s", this.serial, "shell", "input", "keyevent", String(keyCode)],
         {
-          shell: true as any,
           timeout: 5000,
-        } as any,
+          windowsHide: true,
+        },
       );
     } catch (error) {
       const message = `Failed to send key event: ${String(error)}`;
@@ -248,12 +309,21 @@ export class MirrorPanel {
         throw new Error("Could not resolve device screen size");
       }
 
-      await execAsync(
-        `adb -s "${this.serial}" shell input tap ${coords.x} ${coords.y}`,
+      await execFileAsync(
+        "adb",
+        [
+          "-s",
+          this.serial,
+          "shell",
+          "input",
+          "tap",
+          String(coords.x),
+          String(coords.y),
+        ],
         {
-          shell: true as any,
           timeout: 5000,
-        } as any,
+          windowsHide: true,
+        },
       );
     } catch (error) {
       this.notifyWebview("status", `Touch input failed: ${String(error)}`);
@@ -281,12 +351,24 @@ export class MirrorPanel {
       }
 
       const clampedDuration = Math.max(80, Math.min(2000, durationMs || 250));
-      await execAsync(
-        `adb -s "${this.serial}" shell input swipe ${startCoords.x} ${startCoords.y} ${endCoords.x} ${endCoords.y} ${clampedDuration}`,
+      await execFileAsync(
+        "adb",
+        [
+          "-s",
+          this.serial,
+          "shell",
+          "input",
+          "swipe",
+          String(startCoords.x),
+          String(startCoords.y),
+          String(endCoords.x),
+          String(endCoords.y),
+          String(clampedDuration),
+        ],
         {
-          shell: true as any,
           timeout: 7000,
-        } as any,
+          windowsHide: true,
+        },
       );
     } catch (error) {
       this.notifyWebview("status", `Swipe input failed: ${String(error)}`);
@@ -317,12 +399,13 @@ export class MirrorPanel {
     }
 
     try {
-      const { stdout } = await execAsync(
-        `adb -s "${this.serial}" shell wm size`,
+      const { stdout } = await execFileAsync(
+        "adb",
+        ["-s", this.serial, "shell", "wm", "size"],
         {
-          shell: true as any,
           timeout: 5000,
-        } as any,
+          windowsHide: true,
+        },
       );
 
       const match = String(stdout).match(/(\d+)x(\d+)/);
@@ -347,6 +430,27 @@ export class MirrorPanel {
 
     const support = await this.getScrcpySupport();
 
+    const wantsLowestDelay =
+      this.currentPreset === "realtime" ||
+      this.currentPreset === "maxSpeed" ||
+      this.currentPreset === "ultraLowLatency";
+
+    if (support.installed && this.preferNativeLowLatency && wantsLowestDelay) {
+      const launchedNative = await this.launchNativeScrcpy(false);
+      if (launchedNative) {
+        this.streamMode = "scrcpy-native";
+        this.notifyWebview("backend", {
+          mode: this.streamMode,
+          port: this.port,
+        });
+        this.notifyWebview(
+          "status",
+          "Low-delay mode: opened native scrcpy for fastest control response.",
+        );
+        return;
+      }
+    }
+
     if (support.installed && support.mjpegSupported) {
       try {
         await this.startScrcpyMjpeg();
@@ -359,11 +463,23 @@ export class MirrorPanel {
       }
     }
 
+    if (support.installed && !support.mjpegSupported) {
+      const launchedNative = await this.launchNativeScrcpy(false);
+      if (launchedNative) {
+        this.streamMode = "scrcpy-native";
+        this.notifyWebview("backend", {
+          mode: this.streamMode,
+          port: this.port,
+        });
+        return;
+      }
+    }
+
     let reason: string;
     if (!support.installed) {
       reason = "scrcpy not found. Using ADB screenshot fallback.";
     } else if (!support.mjpegSupported) {
-      reason = `scrcpy ${support.version} has no --mjpeg-server. Using ADB screenshot fallback.`;
+      reason = `scrcpy ${support.version} has no --mjpeg-server. Open Native Scrcpy for real-time control, or using ADB screenshot fallback.`;
     } else {
       reason = "Using ADB screenshot fallback.";
     }
@@ -391,7 +507,8 @@ export class MirrorPanel {
 
     this.scrcpyProcess = spawn(this.scrcpyCommand, args, {
       detached: false,
-      shell: true,
+      shell: false,
+      windowsHide: true,
     });
 
     let startupStderr = "";
@@ -434,20 +551,8 @@ export class MirrorPanel {
   private async startAdbScreencapStream(reason: string): Promise<void> {
     this.streamMode = "adb-screencap";
     this.notifyWebview("backend", { mode: this.streamMode, port: this.port });
-    this.notifyWebview(
-      "status",
-      `${reason} Running ADB fallback at ~${Math.round(1000 / this.adbFrameIntervalMs)} FPS target.`,
-    );
-
-    const firstFrame = await this.captureFrameWithAdb();
-    if (!firstFrame || firstFrame.length === 0) {
-      throw new Error("Could not capture initial frame via adb");
-    }
-    this.notifyWebview("frame", {
-      dataUrl: `data:image/png;base64,${firstFrame.toString("base64")}`,
-    });
-
-    this.startAdbFrameLoop();
+    this.notifyWebview("status", `${reason} Persistent ADB stream active.`);
+    this.startPersistentAdbStream();
   }
 
   async applyPreset(preset: PerformancePreset): Promise<void> {
@@ -460,6 +565,14 @@ export class MirrorPanel {
     this.scrcpyMaxSize = config.maxSize;
     this.scrcpyMaxFps = config.maxFps;
     this.scrcpyVideoBitRate = config.bitRate;
+    this.adbFrameIntervalMs = Math.max(
+      10,
+      config.adbFrameIntervalMs ?? this.defaultAdbFrameIntervalMs,
+    );
+    this.adbCaptureTimeoutMs = Math.max(
+      800,
+      config.adbCaptureTimeoutMs ?? this.defaultAdbCaptureTimeoutMs,
+    );
 
     this.notifyWebview("status", `Applied preset: ${config.label}`);
     this.notifyWebview("presetApplied", { preset, config });
@@ -468,6 +581,60 @@ export class MirrorPanel {
     if (this.streamMode === "scrcpy-mjpeg") {
       await this.startStreaming();
     }
+  }
+
+  private startPersistentAdbStream(): void {
+    if (this.scrcpyProcess) {
+      this.scrcpyProcess.kill();
+      this.scrcpyProcess = undefined;
+    }
+
+    const child = spawn(
+      "adb",
+      ["-s", this.serial, "exec-out", "while true; do screencap -p; done"],
+      { shell: false, windowsHide: true },
+    );
+    this.scrcpyProcess = child;
+
+    // IEND is the last 8 bytes of every valid PNG (chunk type + CRC of the final IEND chunk)
+    const IEND = Buffer.from([0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82]);
+    let held: Buffer = Buffer.alloc(0);
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      held =
+        held.length === 0 ? Buffer.from(chunk) : Buffer.concat([held, chunk]);
+      let searchFrom = Math.max(
+        0,
+        held.length - chunk.length - IEND.length + 1,
+      );
+      let pos: number;
+      while ((pos = held.indexOf(IEND, searchFrom)) !== -1) {
+        const frameEnd = pos + IEND.length;
+        const frame = held.slice(0, frameEnd);
+        this.notifyWebview("frame", {
+          dataUrl: `data:image/png;base64,${frame.toString("base64")}`,
+        });
+        this.frameFailureCount = 0;
+        held = held.slice(frameEnd);
+        searchFrom = 0;
+      }
+    });
+
+    child.on("error", () => {
+      if (!this.isDisposed && this.streamMode === "adb-screencap") {
+        this.startAdbFrameLoop();
+      }
+    });
+
+    child.on("close", () => {
+      if (!this.isDisposed && this.streamMode === "adb-screencap") {
+        setTimeout(() => {
+          if (!this.isDisposed && this.streamMode === "adb-screencap") {
+            this.startPersistentAdbStream();
+          }
+        }, 500);
+      }
+    });
   }
 
   private startAdbFrameLoop(): void {
@@ -479,7 +646,7 @@ export class MirrorPanel {
       const startedAt = Date.now();
       await this.pushSingleFrame();
       const elapsedMs = Date.now() - startedAt;
-      const nextDelayMs = Math.max(10, this.adbFrameIntervalMs - elapsedMs);
+      const nextDelayMs = Math.max(1, this.adbFrameIntervalMs - elapsedMs);
 
       this.frameTimer = setTimeout(() => {
         void runLoop();
@@ -534,12 +701,13 @@ export class MirrorPanel {
 
   private async getScrcpySupport(): Promise<ScrcpySupport> {
     try {
-      const { stdout, stderr } = await execAsync(
-        `"${this.scrcpyCommand}" --help`,
+      const { stdout, stderr } = await execFileAsync(
+        this.scrcpyCommand,
+        ["--help"],
         {
-          shell: true as any,
           timeout: 5000,
-        } as any,
+          windowsHide: true,
+        },
       );
 
       const output = String(stdout) + String(stderr);
@@ -572,12 +740,13 @@ export class MirrorPanel {
 
   private async getScrcpyVersion(): Promise<string> {
     try {
-      const versionOutput = await execAsync(
-        `"${this.scrcpyCommand}" --version`,
+      const versionOutput = await execFileAsync(
+        this.scrcpyCommand,
+        ["--version"],
         {
-          shell: true as any,
           timeout: 5000,
-        } as any,
+          windowsHide: true,
+        },
       );
       return (
         String(versionOutput.stdout).match(/scrcpy\s+([^\s]+)/)?.[1] ||
@@ -644,12 +813,58 @@ export class MirrorPanel {
 
   private async canExecuteScrcpy(command: string): Promise<boolean> {
     try {
-      await execAsync(`"${command}" --version`, {
-        shell: true as any,
+      await execFileAsync(command, ["--version"], {
         timeout: 4000,
-      } as any);
+        windowsHide: true,
+      });
       return true;
     } catch {
+      return false;
+    }
+  }
+
+  private async launchNativeScrcpy(showStatus: boolean): Promise<boolean> {
+    try {
+      const args = [
+        "-s",
+        this.serial,
+        "--no-audio",
+        "--stay-awake",
+        "--no-clipboard",
+        "--max-size",
+        String(this.scrcpyMaxSize),
+        "--max-fps",
+        String(this.scrcpyMaxFps),
+        "--video-bit-rate",
+        this.scrcpyVideoBitRate,
+        "--display-buffer",
+        "0",
+        "--window-title",
+        `scrcpy realtime: ${this.serial}`,
+      ];
+
+      const nativeProcess = spawn(this.scrcpyCommand, args, {
+        detached: true,
+        shell: false,
+        stdio: "ignore",
+        windowsHide: true,
+      });
+
+      nativeProcess.unref();
+
+      if (showStatus) {
+        this.notifyWebview(
+          "status",
+          "Opened native scrcpy window for real-time view and control.",
+        );
+      }
+
+      return true;
+    } catch (error) {
+      const message = `Could not open native scrcpy: ${String(error)}`;
+      if (showStatus) {
+        this.notifyWebview("error", message);
+      }
       return false;
     }
   }
@@ -693,7 +908,8 @@ export class MirrorPanel {
         "adb",
         ["-s", this.serial, "exec-out", "screencap", "-p"],
         {
-          shell: true,
+          shell: false,
+          windowsHide: true,
         },
       );
       const chunks: Buffer[] = [];
@@ -702,7 +918,7 @@ export class MirrorPanel {
       const timeout = setTimeout(() => {
         child.kill();
         reject(new Error("adb frame capture timed out"));
-      }, 5000);
+      }, this.adbCaptureTimeoutMs);
 
       child.stdout?.on("data", (chunk: Buffer) => {
         chunks.push(chunk);
@@ -787,30 +1003,30 @@ export class MirrorPanel {
             font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
             display: flex;
             flex-direction: column;
-            height: 100vh;
+          height: 100vh;
             overflow: hidden;
         }
 
         .app-container {
-            display: flex;
+          display: flex;
             flex: 1;
-            flex-direction: column;
+          flex-direction: column;
             position: relative;
         }
 
         .stream-wrapper {
-            flex: 1;
+          flex: 1;
             display: flex;
             align-items: center;
             justify-content: center;
-            background: #000;
+          background: #000;
         }
 
         .stream-container {
             position: relative;
             width: 100%;
-            height: 100%;
-            background: #000;
+          height: 100%;
+          background: #000;
             overflow: hidden;
         }
 
@@ -821,6 +1037,15 @@ export class MirrorPanel {
             touch-action: none;
             user-select: none;
             -webkit-user-drag: none;
+            cursor: none;
+        }
+
+        #streamCanvas {
+            width: 100%;
+            height: auto;
+            display: block;
+            touch-action: none;
+            user-select: none;
             cursor: none;
         }
 
@@ -935,12 +1160,12 @@ export class MirrorPanel {
         .toolbar {
             display: flex;
             align-items: center;
-            justify-content: center;
-            gap: 8px;
-            padding: 12px 16px;
+          justify-content: center;
+          gap: 8px;
+          padding: 12px 16px;
             background: var(--bg-secondary);
             border-top: 1px solid var(--border);
-            flex-wrap: wrap;
+          flex-wrap: wrap;
         }
 
         .toolbar-group {
@@ -1013,10 +1238,10 @@ export class MirrorPanel {
         .quality-selector {
             display: flex;
             align-items: center;
-            gap: 2px;
+          gap: 2px;
             background: var(--bg-primary);
-            padding: 3px;
-            border-radius: 10px;
+          padding: 3px;
+          border-radius: 10px;
         }
 
         .quality-btn {
@@ -1043,8 +1268,8 @@ export class MirrorPanel {
         .status-bar {
             display: flex;
             align-items: center;
-            justify-content: center;
-            padding: 8px 16px;
+          justify-content: center;
+          padding: 8px 16px;
             font-size: 12px;
             color: var(--text-secondary);
             background: var(--bg-secondary);
@@ -1106,7 +1331,7 @@ export class MirrorPanel {
 <body>
     <div class="app-container">
         <div class="stream-wrapper">
-            <div class="stream-container" id="streamContainer">
+          <div class="stream-container" id="streamContainer">
                 <div class="device-badge">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
@@ -1120,6 +1345,7 @@ export class MirrorPanel {
                     <span class="loading-text">Connecting to device...</span>
                 </div>
                 <img id="stream" style="display: none;" alt="Device screen" />
+                <canvas id="streamCanvas" style="display: none;"></canvas>
                 <div id="touchCursor"></div>
             </div>
         </div>
@@ -1152,6 +1378,16 @@ export class MirrorPanel {
                         <span class="tooltip">High quality (1080p, 30fps)</span>
                     </button>
                 </div>
+            </div>
+
+            <div class="toolbar-group">
+              <button class="icon-btn" onclick="openNativeScrcpy()" title="Open Native Scrcpy">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="4" y="3" width="16" height="12" rx="2" ry="2"/>
+                  <path d="M8 21h8M12 15v6"/>
+                </svg>
+                <span class="tooltip">Open Native Scrcpy (Lowest Latency)</span>
+              </button>
             </div>
 
             <div class="toolbar-group">
@@ -1220,6 +1456,8 @@ export class MirrorPanel {
     <script>
         const vscode = acquireVsCodeApi();
         const stream = document.getElementById('stream');
+        const streamCanvas = document.getElementById('streamCanvas');
+        const ctx = streamCanvas.getContext('2d', { alpha: false, desynchronized: true });
         const statusText = document.getElementById('statusText');
         const statusBar = document.getElementById('statusBar');
         const statusIndicator = document.getElementById('statusIndicator');
@@ -1277,6 +1515,9 @@ export class MirrorPanel {
                 statusText.textContent = 'Starting stream...';
                 statusIndicator.className = 'status-indicator connecting';
                 loadScrcpyStream();
+              } else if (backendMode === 'scrcpy-native') {
+                statusText.textContent = 'Native scrcpy opened for real-time control';
+                statusIndicator.className = 'status-indicator';
               } else if (backendMode === 'adb-screencap') {
                 statusText.textContent = 'ADB screenshot mode';
                 statusIndicator.className = 'status-indicator';
@@ -1285,11 +1526,23 @@ export class MirrorPanel {
               break;
             case 'frame':
               if (message.dataUrl) {
-                stream.src = message.dataUrl;
-                stream.style.display = 'block';
+                stream.style.display = 'none';
+                streamCanvas.style.display = 'block';
                 loadingDiv.style.display = 'none';
                 isConnected = true;
                 frameCount++;
+                const b64 = message.dataUrl.slice(message.dataUrl.indexOf(',') + 1);
+                const bin = atob(b64);
+                const arr = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+                createImageBitmap(new Blob([arr], {type: 'image/png'})).then(bitmap => {
+                  if (streamCanvas.width !== bitmap.width || streamCanvas.height !== bitmap.height) {
+                    streamCanvas.width = bitmap.width;
+                    streamCanvas.height = bitmap.height;
+                  }
+                  ctx.drawImage(bitmap, 0, 0);
+                  bitmap.close();
+                });
               }
               break;
                 case 'error':
@@ -1354,6 +1607,12 @@ export class MirrorPanel {
             });
         }
 
+        function openNativeScrcpy() {
+          vscode.postMessage({
+            command: 'openNativeScrcpy'
+          });
+        }
+
         function applyPreset(preset) {
             vscode.postMessage({
                 command: 'applyPreset',
@@ -1372,7 +1631,9 @@ export class MirrorPanel {
         }
 
         function getNormalizedTouchPoint(event) {
-          const rect = stream.getBoundingClientRect();
+          // Use whichever stream surface is currently visible
+          const el = streamCanvas.style.display !== 'none' ? streamCanvas : stream;
+          const rect = el.getBoundingClientRect();
           if (!rect.width || !rect.height) {
             return null;
           }
@@ -1404,74 +1665,73 @@ export class MirrorPanel {
           }
         }
 
-        stream.addEventListener('pointermove', (event) => {
-          updateTouchCursor(event.clientX, event.clientY);
-        });
+        // Attach pointer listeners to both img (MJPEG) and canvas (ADB screencap)
+        [stream, streamCanvas].forEach(el => {
+          el.addEventListener('pointermove', (event) => {
+            updateTouchCursor(event.clientX, event.clientY);
+          });
 
-        stream.addEventListener('pointerleave', () => {
-          touchCursor.style.display = 'none';
-        });
+          el.addEventListener('pointerleave', () => {
+            touchCursor.style.display = 'none';
+          });
 
-        stream.addEventListener('pointerdown', (event) => {
-          if (stream.style.display === 'none') {
-            return;
-          }
+          el.addEventListener('pointerdown', (event) => {
+            touchCursor.classList.add('active');
 
-          touchCursor.classList.add('active');
+            const point = getNormalizedTouchPoint(event);
+            if (!point) {
+              return;
+            }
 
-          const point = getNormalizedTouchPoint(event);
-          if (!point) {
-            return;
-          }
+            pointerStart = {
+              ...point,
+              time: Date.now()
+            };
+            el.setPointerCapture(event.pointerId);
+          });
 
-          pointerStart = {
-            ...point,
-            time: Date.now()
-          };
-          stream.setPointerCapture(event.pointerId);
-        });
+          el.addEventListener('pointerup', (event) => {
+            touchCursor.classList.remove('active');
 
-        stream.addEventListener('pointerup', (event) => {
-          touchCursor.classList.remove('active');
+            if (!pointerStart) {
+              return;
+            }
 
-          if (!pointerStart) {
-            return;
-          }
+            const point = getNormalizedTouchPoint(event);
+            if (!point) {
+              pointerStart = null;
+              return;
+            }
 
-          const point = getNormalizedTouchPoint(event);
-          if (!point) {
+            const dx = point.x - pointerStart.x;
+            const dy = point.y - pointerStart.y;
+            const distance = Math.sqrt((dx * dx) + (dy * dy));
+            const durationMs = Date.now() - pointerStart.time;
+
+            if (distance < 0.015) {
+              vscode.postMessage({
+                command: 'sendTap',
+                normalizedX: point.x,
+                normalizedY: point.y
+              });
+            } else {
+              vscode.postMessage({
+                command: 'sendSwipe',
+                startX: pointerStart.x,
+                startY: pointerStart.y,
+                endX: point.x,
+                endY: point.y,
+                durationMs
+              });
+            }
+
             pointerStart = null;
-            return;
-          }
+          });
 
-          const dx = point.x - pointerStart.x;
-          const dy = point.y - pointerStart.y;
-          const distance = Math.sqrt((dx * dx) + (dy * dy));
-          const durationMs = Date.now() - pointerStart.time;
-
-          if (distance < 0.015) {
-            vscode.postMessage({
-              command: 'sendTap',
-              normalizedX: point.x,
-              normalizedY: point.y
-            });
-          } else {
-            vscode.postMessage({
-              command: 'sendSwipe',
-              startX: pointerStart.x,
-              startY: pointerStart.y,
-              endX: point.x,
-              endY: point.y,
-              durationMs
-            });
-          }
-
-          pointerStart = null;
-        });
-
-        stream.addEventListener('pointercancel', () => {
-          touchCursor.classList.remove('active');
-          pointerStart = null;
+          el.addEventListener('pointercancel', () => {
+            touchCursor.classList.remove('active');
+            pointerStart = null;
+          });
         });
 
         // Direct keyboard input handling with batching to reduce adb command spam.
@@ -1514,7 +1774,7 @@ export class MirrorPanel {
           pendingTextTimer = setTimeout(() => {
             flushPendingText();
             pendingTextTimer = null;
-          }, 35);
+          }, 12);
         }
 
         window.addEventListener('blur', () => {
