@@ -6,6 +6,7 @@ import * as http from "http";
 const execAsync = promisify(exec);
 
 type StreamMode = "unknown" | "scrcpy-mjpeg" | "adb-screencap";
+type PerformancePreset = "ultraLowLatency" | "balanced" | "quality";
 
 interface ScrcpySupport {
   installed: boolean;
@@ -17,6 +18,19 @@ interface DeviceScreenSize {
   width: number;
   height: number;
 }
+
+interface PerformanceConfig {
+  maxSize: number;
+  maxFps: number;
+  bitRate: string;
+  label: string;
+}
+
+const PERFORMANCE_PRESETS: Record<PerformancePreset, PerformanceConfig> = {
+  "ultraLowLatency": { maxSize: 480, maxFps: 60, bitRate: "2M", label: "Ultra Fast" },
+  "balanced": { maxSize: 720, maxFps: 60, bitRate: "4M", label: "Balanced" },
+  "quality": { maxSize: 1080, maxFps: 30, bitRate: "8M", label: "High Quality" },
+};
 
 export class MirrorPanel {
   private panel: vscode.WebviewPanel | undefined;
@@ -34,7 +48,8 @@ export class MirrorPanel {
   private adbFrameIntervalMs = 80;
   private scrcpyMaxSize = 720;
   private scrcpyMaxFps = 60;
-  private scrcpyVideoBitRate = "8M";
+  private scrcpyVideoBitRate = "4M";
+  private currentPreset: PerformancePreset = "balanced";
 
   constructor(serial: string, onDispose?: () => void) {
     this.serial = serial;
@@ -109,6 +124,9 @@ export class MirrorPanel {
             Number(message.endY),
             Number(message.durationMs),
           );
+          break;
+        case "applyPreset":
+          await this.applyPreset(message.preset as PerformancePreset);
           break;
       }
     });
@@ -341,6 +359,26 @@ export class MirrorPanel {
     });
 
     this.startAdbFrameLoop();
+  }
+
+  private async applyPreset(preset: PerformancePreset): Promise<void> {
+    const config = PERFORMANCE_PRESETS[preset];
+    if (!config) {
+      return;
+    }
+
+    this.currentPreset = preset;
+    this.scrcpyMaxSize = config.maxSize;
+    this.scrcpyMaxFps = config.maxFps;
+    this.scrcpyVideoBitRate = config.bitRate;
+
+    this.notifyWebview("status", `Applied preset: ${config.label}`);
+    this.notifyWebview("presetApplied", { preset, config });
+
+    // Restart streaming with new settings
+    if (this.streamMode === "scrcpy-mjpeg") {
+      await this.startStreaming();
+    }
   }
 
   private startAdbFrameLoop(): void {
@@ -664,25 +702,55 @@ export class MirrorPanel {
             width: 100%;
             max-width: 800px;
             background-color: #000;
-            border-radius: 8px;
+            border-radius: 12px;
             overflow: hidden;
+            position: relative;
         }
 
         #stream {
             max-width: 100%;
             max-height: 100%;
             object-fit: contain;
-          touch-action: none;
-          user-select: none;
-          -webkit-user-drag: none;
-          cursor: crosshair;
+            touch-action: none;
+            user-select: none;
+            -webkit-user-drag: none;
+            cursor: none;
+        }
+
+        #touchCursor {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255, 255, 255, 0.8);
+            border-radius: 50%;
+            pointer-events: none;
+            transform: translate(-50%, -50%);
+            display: none;
+            z-index: 10;
+        }
+
+        #touchCursor::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 4px;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        #touchCursor.active {
+            background: rgba(100, 180, 255, 0.3);
+            border-color: rgba(100, 180, 255, 1);
         }
 
         .controls {
             display: flex;
             flex-wrap: wrap;
             gap: 10px;
-            margin-top: 20px;
+            margin-top: 16px;
             justify-content: center;
             width: 100%;
             max-width: 800px;
@@ -690,9 +758,18 @@ export class MirrorPanel {
 
         .control-group {
             display: flex;
-            gap: 10px;
+            gap: 8px;
             flex-wrap: wrap;
             justify-content: center;
+            align-items: center;
+        }
+
+        .control-label {
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 0 4px;
         }
 
         button {
@@ -700,7 +777,7 @@ export class MirrorPanel {
             color: var(--vscode-button-foreground);
             border: none;
             padding: 10px 16px;
-            border-radius: 4px;
+            border-radius: 6px;
             cursor: pointer;
             font-family: var(--vscode-font-family);
             font-size: 13px;
@@ -716,10 +793,20 @@ export class MirrorPanel {
             background-color: var(--vscode-button-activeBackground);
         }
 
+        button.preset-btn {
+            min-width: 100px;
+        }
+
+        button.preset-btn.active {
+            background-color: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+            box-shadow: inset 0 0 0 1px var(--vscode-button-border);
+        }
+
         .status {
-            margin-top: 10px;
-            padding: 8px 12px;
-            border-radius: 4px;
+            margin-top: 12px;
+            padding: 10px 16px;
+            border-radius: 6px;
             background-color: var(--vscode-editorInfo-background);
             color: var(--vscode-editorInfo-foreground);
             font-size: 12px;
@@ -735,7 +822,7 @@ export class MirrorPanel {
 
         h1 {
             font-size: 18px;
-            margin: 0 0 20px 0;
+            margin: 0 0 16px 0;
             color: var(--vscode-editor-foreground);
         }
 
@@ -743,6 +830,12 @@ export class MirrorPanel {
             color: var(--vscode-editor-foreground);
             font-size: 14px;
             text-align: center;
+        }
+
+        .preset-info {
+            font-size: 10px;
+            color: var(--vscode-descriptionForeground);
+            margin-top: 4px;
         }
     </style>
 </head>
@@ -753,6 +846,16 @@ export class MirrorPanel {
         <div class="stream-container">
             <div class="loading">Starting scrcpy server...</div>
             <img id="stream" style="display: none;" alt="Device screen" />
+            <div id="touchCursor"></div>
+        </div>
+
+        <div class="controls">
+            <div class="control-group">
+                <span class="control-label">Quality</span>
+                <button class="preset-btn" onclick="applyPreset('ultraLowLatency')" data-preset="ultraLowLatency">Ultra Fast</button>
+                <button class="preset-btn active" onclick="applyPreset('balanced')" data-preset="balanced">Balanced</button>
+                <button class="preset-btn" onclick="applyPreset('quality')" data-preset="quality">Quality</button>
+            </div>
         </div>
 
         <div class="controls">
@@ -779,12 +882,14 @@ export class MirrorPanel {
         const stream = document.getElementById('stream');
         const status = document.getElementById('status');
         const loadingDiv = document.querySelector('.loading');
+        const touchCursor = document.getElementById('touchCursor');
         let backendMode = 'unknown';
         let streamPort = ${this.port};
         let retryCount = 0;
         const maxRetries = 10;
         let isConnected = false;
         let pointerStart = null;
+        let currentPreset = 'balanced';
 
         stream.onload = () => {
           if (backendMode === 'scrcpy-mjpeg') {
@@ -847,6 +952,10 @@ export class MirrorPanel {
                     status.textContent = message.message;
                     status.className = 'status';
                     break;
+                case 'presetApplied':
+                    currentPreset = message.preset;
+                    updatePresetButtons();
+                    break;
             }
         });
 
@@ -883,6 +992,23 @@ export class MirrorPanel {
             });
         }
 
+        function applyPreset(preset) {
+            vscode.postMessage({
+                command: 'applyPreset',
+                preset: preset
+            });
+        }
+
+        function updatePresetButtons() {
+            document.querySelectorAll('.preset-btn').forEach(btn => {
+                if (btn.dataset.preset === currentPreset) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+        }
+
         function getNormalizedTouchPoint(event) {
           const rect = stream.getBoundingClientRect();
           if (!rect.width || !rect.height) {
@@ -902,10 +1028,34 @@ export class MirrorPanel {
           };
         }
 
+        function updateTouchCursor(clientX, clientY) {
+          const container = document.querySelector('.stream-container');
+          const rect = container.getBoundingClientRect();
+
+          if (clientX >= rect.left && clientX <= rect.right &&
+              clientY >= rect.top && clientY <= rect.bottom) {
+            touchCursor.style.display = 'block';
+            touchCursor.style.left = (clientX - rect.left) + 'px';
+            touchCursor.style.top = (clientY - rect.top) + 'px';
+          } else {
+            touchCursor.style.display = 'none';
+          }
+        }
+
+        stream.addEventListener('pointermove', (event) => {
+          updateTouchCursor(event.clientX, event.clientY);
+        });
+
+        stream.addEventListener('pointerleave', () => {
+          touchCursor.style.display = 'none';
+        });
+
         stream.addEventListener('pointerdown', (event) => {
           if (stream.style.display === 'none') {
             return;
           }
+
+          touchCursor.classList.add('active');
 
           const point = getNormalizedTouchPoint(event);
           if (!point) {
@@ -920,6 +1070,8 @@ export class MirrorPanel {
         });
 
         stream.addEventListener('pointerup', (event) => {
+          touchCursor.classList.remove('active');
+
           if (!pointerStart) {
             return;
           }
@@ -956,6 +1108,7 @@ export class MirrorPanel {
         });
 
         stream.addEventListener('pointercancel', () => {
+          touchCursor.classList.remove('active');
           pointerStart = null;
         });
     </script>
