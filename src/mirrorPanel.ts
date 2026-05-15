@@ -502,7 +502,6 @@ export class MirrorPanel {
       `--max-size=${this.scrcpyMaxSize}`,
       `--max-fps=${this.scrcpyMaxFps}`,
       `--video-bit-rate=${this.scrcpyVideoBitRate}`,
-      "--display-buffer=0",
     ];
 
     this.scrcpyProcess = spawn(this.scrcpyCommand, args, {
@@ -837,8 +836,6 @@ export class MirrorPanel {
         String(this.scrcpyMaxFps),
         "--video-bit-rate",
         this.scrcpyVideoBitRate,
-        "--display-buffer",
-        "0",
         "--window-title",
         `scrcpy realtime: ${this.serial}`,
       ];

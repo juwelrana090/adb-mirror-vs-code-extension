@@ -429,7 +429,6 @@ export class MirrorSession {
       `--max-size=${this.scrcpyMaxSize}`,
       `--max-fps=${this.scrcpyMaxFps}`,
       `--video-bit-rate=${this.scrcpyVideoBitRate}`,
-      "--display-buffer=0",
     ];
 
     this.scrcpyProcess = spawn(this.scrcpyCommand, args, {
@@ -984,8 +983,6 @@ export class MirrorViewProvider implements vscode.WebviewViewProvider {
       String(scrcpyMaxFps),
       "--video-bit-rate",
       scrcpyVideoBitRate || "8M",
-      "--display-buffer",
-      "0",
       "--window-title",
       `scrcpy realtime: ${serial}`,
     ];
