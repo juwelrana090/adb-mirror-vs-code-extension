@@ -1,12 +1,19 @@
 import * as vscode from "vscode";
-import { spawn, exec } from "child_process";
+import { spawn, exec, execFile } from "child_process";
 import { promisify } from "util";
 import * as http from "http";
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 type StreamMode = "unknown" | "scrcpy-mjpeg" | "adb-screencap";
-type PerformancePreset = "realtime" | "light" | "ultraLowLatency" | "maxSpeed" | "balanced" | "quality";
+type PerformancePreset =
+  | "realtime"
+  | "light"
+  | "ultraLowLatency"
+  | "maxSpeed"
+  | "balanced"
+  | "quality";
 
 interface ScrcpySupport {
   installed: boolean;
@@ -139,6 +146,66 @@ export class MirrorSession {
     }
   }
 
+  async sendText(text: string): Promise<void> {
+    try {
+      if (!text) {
+        return;
+      }
+      await this.sendTextViaInput(text);
+    } catch (error) {
+      const message = `Failed to send text: ${String(error)}`;
+      vscode.window.showErrorMessage(message);
+      this.notifyWebview("error", message);
+    }
+  }
+
+  private async sendTextViaInput(text: string): Promise<void> {
+    // Keep input text stable across shells and adb by sending in chunks,
+    // translating spaces to %s, and preserving a literal % as \%.
+    const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    const lines = normalized.split("\n");
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.length > 0) {
+        for (const chunk of this.chunkTextForAdb(line, 180)) {
+          const escapedChunk = this.escapeTextForAdbInput(chunk);
+          await execFileAsync(
+            "adb",
+            ["-s", this.serial, "shell", "input", "text", escapedChunk],
+            {
+              timeout: 5000,
+              windowsHide: true,
+            },
+          );
+        }
+      }
+
+      // Recreate line breaks with ENTER to match direct typing behavior.
+      if (i < lines.length - 1) {
+        await this.sendKeyEvent(66);
+      }
+    }
+  }
+
+  private chunkTextForAdb(text: string, maxChunkLength: number): string[] {
+    const chunks: string[] = [];
+    for (let i = 0; i < text.length; i += maxChunkLength) {
+      chunks.push(text.slice(i, i + maxChunkLength));
+    }
+    return chunks;
+  }
+
+  private escapeTextForAdbInput(text: string): string {
+    // Escape order matters: preserve literal % first, then map spaces to %s.
+    return text
+      .replace(/\\/g, "\\\\")
+      .replace(/"/g, '\\"')
+      .replace(/'/g, "\\'")
+      .replace(/%/g, "\\%")
+      .replace(/ /g, "%s");
+  }
+
   private async sendTap(
     normalizedX: number,
     normalizedY: number,
@@ -248,6 +315,9 @@ export class MirrorSession {
     switch (message.command) {
       case "sendKeyEvent":
         void this.sendKeyEvent(Number(message.keyCode));
+        break;
+      case "sendText":
+        void this.sendText(String(message.text));
         break;
       case "refreshStream":
         if (this.streamMode === "adb-screencap") {
@@ -560,10 +630,7 @@ export class MirrorSession {
   }
 
   private async pushSingleFrame(): Promise<void> {
-    if (
-      this.frameInFlight ||
-      this.streamMode !== "adb-screencap"
-    ) {
+    if (this.frameInFlight || this.streamMode !== "adb-screencap") {
       return;
     }
 
@@ -596,7 +663,8 @@ export class MirrorSession {
         "adb",
         ["-s", this.serial, "exec-out", "screencap", "-p"],
         {
-          shell: true,
+          shell: false,
+          windowsHide: true,
         },
       );
       const chunks: Buffer[] = [];
@@ -779,6 +847,11 @@ export class MirrorViewProvider implements vscode.WebviewViewProvider {
             box-sizing: border-box;
         }
 
+        html, body {
+          width: 100%;
+          height: 100%;
+        }
+
         body {
             margin: 0;
             padding: 0;
@@ -787,7 +860,6 @@ export class MirrorViewProvider implements vscode.WebviewViewProvider {
             font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
             display: flex;
             flex-direction: column;
-            height: 100vh;
             overflow: hidden;
         }
 
@@ -818,6 +890,7 @@ export class MirrorViewProvider implements vscode.WebviewViewProvider {
         #stream {
             width: 100%;
             height: 100%;
+          display: block;
             object-fit: contain;
             touch-action: none;
             user-select: none;
@@ -1487,6 +1560,108 @@ export class MirrorViewProvider implements vscode.WebviewViewProvider {
           touchCursor.classList.remove('active');
           pointerStart = null;
         });
+
+        // Direct keyboard input handling with batching to reduce adb command spam.
+        document.body.tabIndex = 0;
+        document.body.focus();
+
+        const specialKeys = {
+          'Enter': 66, 'Backspace': 67, 'Tab': 61, 'Escape': 111,
+          'ArrowUp': 19, 'ArrowDown': 20, 'ArrowLeft': 21, 'ArrowRight': 22,
+          'Home': 3, 'End': 123, 'Delete': 67, 'Insert': 124,
+          'PageUp': 92, 'PageDown': 93,
+          'F1': 131, 'F2': 132, 'F3': 133, 'F4': 134, 'F5': 135,
+          'F6': 136, 'F7': 137, 'F8': 138, 'F9': 139, 'F10': 140,
+          'F11': 141, 'F12': 142
+        };
+
+        let pendingTextBuffer = '';
+        let pendingTextTimer = null;
+
+        function flushPendingText() {
+          if (!pendingTextBuffer) {
+            return;
+          }
+          vscode.postMessage({
+            command: 'sendText',
+            text: pendingTextBuffer
+          });
+          pendingTextBuffer = '';
+        }
+
+        function queueTextInput(text) {
+          if (!text) {
+            return;
+          }
+          pendingTextBuffer += text;
+          if (pendingTextTimer) {
+            clearTimeout(pendingTextTimer);
+          }
+          pendingTextTimer = setTimeout(() => {
+            flushPendingText();
+            pendingTextTimer = null;
+          }, 35);
+        }
+
+        window.addEventListener('blur', () => {
+          flushPendingText();
+        });
+
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState !== 'visible') {
+            flushPendingText();
+          }
+        });
+
+        document.addEventListener('paste', (event) => {
+          const pasted = event.clipboardData?.getData('text') || '';
+          if (!pasted) {
+            return;
+          }
+          queueTextInput(pasted);
+          event.preventDefault();
+          event.stopPropagation();
+        }, { capture: true });
+
+        document.addEventListener('keydown', (event) => {
+          if (event.target.tagName === 'BUTTON' || event.target.tagName === 'INPUT') {
+            return;
+          }
+
+          if (specialKeys[event.key]) {
+            flushPendingText();
+            vscode.postMessage({
+              command: 'sendKeyEvent',
+              keyCode: specialKeys[event.key]
+            });
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+
+          if (event.key === ' ') {
+            queueTextInput(' ');
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+
+          if (event.key.length === 1) {
+            const charCode = event.key.charCodeAt(0);
+            if (charCode >= 33 && charCode <= 126) {
+              queueTextInput(event.key);
+              event.preventDefault();
+              event.stopPropagation();
+              return;
+            }
+          }
+        }, { capture: true, passive: false });
+
+        document.getElementById('streamContainer').addEventListener('pointerdown', () => {
+          document.body.focus();
+        });
+
+        statusText.textContent = 'Keyboard input ready';
     </script>
 </body>
 </html>`;

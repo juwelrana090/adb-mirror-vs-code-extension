@@ -56,10 +56,14 @@ export class AdbDeviceProvider implements vscode.TreeDataProvider<AdbDeviceItem>
       // Skip header line
       for (let i = 1; i < lines.length; i++) {
         const line = lines[i].trim();
-        if (!line) continue;
+        if (!line) {
+          continue;
+        }
 
         const parts = line.split(/\s+/);
-        if (parts.length < 2) continue;
+        if (parts.length < 2) {
+          continue;
+        }
 
         const device: AdbDevice = {
           serial: parts[0],

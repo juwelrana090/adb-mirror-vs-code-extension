@@ -1,9 +1,9 @@
 {
-  "name": "adb-mirror",
-  "displayName": "ADB Mirror",
+  "name": "qawiun-adb-mirror",
+  "displayName": "Qawiun ADB Mirror",
   "description": "Mirror Android devices directly in VS Code using scrcpy",
   "version": "1.0.0",
-  "publisher": "your-publisher-name",
+  "publisher": "Qawiun",
   "engines": {
     "vscode": "^1.80.0"
   },

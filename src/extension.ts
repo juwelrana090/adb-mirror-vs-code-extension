@@ -4,9 +4,20 @@ import { MirrorViewProvider } from "./mirrorViewProvider";
 
 let deviceProvider: AdbDeviceProvider;
 let mirrorViewProvider: MirrorViewProvider;
+let treeView: vscode.TreeView<AdbDeviceItem> | undefined;
+let webviewViewRegistration: vscode.Disposable | undefined;
+let isActivated = false;
 
 export function activate(context: vscode.ExtensionContext) {
+  if (isActivated) {
+    console.warn(
+      "ADB Mirror extension activate() called again; skipping duplicate registration.",
+    );
+    return;
+  }
+
   console.log("ADB Mirror extension is now active!");
+  isActivated = true;
 
   // Create the device provider
   deviceProvider = new AdbDeviceProvider();
@@ -15,13 +26,16 @@ export function activate(context: vscode.ExtensionContext) {
   mirrorViewProvider = new MirrorViewProvider(context.extensionUri);
 
   // Register the tree data provider
-  const treeView = vscode.window.createTreeView("adbMirrorDevices", {
+  treeView?.dispose();
+  treeView = vscode.window.createTreeView("adbMirrorDevices", {
     treeDataProvider: deviceProvider,
     showCollapseAll: false,
   });
+  context.subscriptions.push(treeView);
 
   // Register the webview view provider for the sidebar mirror
-  vscode.window.registerWebviewViewProvider(
+  webviewViewRegistration?.dispose();
+  webviewViewRegistration = vscode.window.registerWebviewViewProvider(
     "adbMirrorView",
     mirrorViewProvider,
     {
@@ -30,6 +44,7 @@ export function activate(context: vscode.ExtensionContext) {
       },
     },
   );
+  context.subscriptions.push(webviewViewRegistration);
 
   // Register commands
   context.subscriptions.push(
@@ -95,9 +110,6 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
 
-  // Store the tree view for cleanup
-  context.subscriptions.push(treeView);
-
   // Initial refresh
   deviceProvider.refresh();
 }
@@ -118,4 +130,16 @@ export function deactivate() {
   if (mirrorViewProvider) {
     mirrorViewProvider.dispose();
   }
+
+  if (treeView) {
+    treeView.dispose();
+    treeView = undefined;
+  }
+
+  if (webviewViewRegistration) {
+    webviewViewRegistration.dispose();
+    webviewViewRegistration = undefined;
+  }
+
+  isActivated = false;
 }

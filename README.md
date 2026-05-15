@@ -1,159 +1,184 @@
 # ADB Mirror VS Code Extension
 
-Mirror Android devices directly in VS Code using scrcpy.
+Mirror and control Android devices directly inside VS Code.
 
-## Features
+## What This Extension Does
 
-- 📱 List connected Android devices in the sidebar
-- 🖥️ Mirror device screen in a VS Code webview panel
-- 🎮 Hardware button controls (Home, Back, Volume, Power)
-- 🔄 Auto-refresh device list every 5 seconds
-- 🚀 One-click start/stop mirroring
+- Shows connected Android devices in a sidebar tree.
+- Starts phone screen mirroring in the ADB Mirror view.
+- Supports touch control (tap/swipe) from the mirror view.
+- Supports keyboard control (text typing, Enter, Backspace, arrows, etc).
+- Provides quick hardware key actions (Home, Back, Volume, Power).
+- Uses scrcpy MJPEG when available, with ADB screencap fallback.
 
 ## Prerequisites
 
-1. **ADB (Android Debug Bridge)** - Install as part of Android SDK or standalone
-2. **scrcpy** - Screen copying utility
-   - **Windows**: Install via winget: `winget install genymobile.scrcpy`
-   - **macOS**: Install via brew: `brew install scrcpy`
-   - **Linux**: Install via package manager (varies by distro)
+1. ADB installed and available in PATH.
+2. USB debugging enabled on your Android device.
+3. scrcpy installed (recommended for better performance).
 
-### Important: scrcpy Version Compatibility
+Install scrcpy:
 
-This extension is designed to work with scrcpy v3.x+. The `--mjpeg-server` flag may not be available in newer versions. The extension includes fallback logic for different scrcpy versions, but you may need to adjust the `startScrcpy()` method in `mirrorPanel.ts` based on your scrcpy version.
+- Windows: `winget install Genymobile.scrcpy`
+- macOS: `brew install scrcpy`
+- Linux: install from your distro package manager
 
-### Check your scrcpy version and flags:
+Verify tools:
 
 ```bash
+adb version
 scrcpy --version
-scrcpy --help | grep mjpeg
 ```
 
-## Installation
+## Install and Run (Development)
 
-1. Clone this repository
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Compile the TypeScript:
-   ```bash
-   npm run compile
-   ```
-4. Package the extension (optional):
-   ```bash
-   npm run vscode:prepublish
-   ```
+1. Install dependencies:
 
-### Install in VS Code
+```bash
+npm install
+```
 
-**Method 1: From Source**
+2. Compile:
 
-1. Open VS Code
-2. Press `F5` to launch a new Extension Development Host window
-3. The extension will be active in the new window
+```bash
+npm run compile
+```
 
-**Method 2: Package and Install**
+3. Start extension host:
 
-1. Install vsce: `npm install -g @vscode/vsce`
-2. Package: `vsce package`
-3. Install the `.vsix` file in VS Code
+- Press `F5` in VS Code.
+- A new Extension Development Host window opens.
 
-## Usage
+## Install as VSIX (Optional)
 
-1. **Connect your Android device** via USB with USB debugging enabled
-2. **Open the ADB Mirror sidebar** (phone icon in activity bar)
-3. **Click on a device** to start mirroring
-4. **Use the control buttons** to send hardware key events
-5. **Click "Stop"** or close the panel to stop mirroring
+1. Install vsce:
 
-### Key Events
+```bash
+npm install -g @vscode/vsce
+```
 
-- **Home** ( keycode 3)
-- **Back** (keycode 4)
-- **Volume Up** (keycode 24)
-- **Volume Down** (keycode 25)
-- **Power** (keycode 26)
+2. Build VSIX:
+
+```bash
+vsce package
+```
+
+3. In VS Code, run command: `Extensions: Install from VSIX...`
+
+## How To Use in VS Code
+
+1. Open the ADB Mirror activity bar view.
+2. In the Devices section, find your phone (for example `192.168.x.x:5555`).
+3. Run Start Mirror from the device context action.
+4. Mirror appears in the Mirror section.
+
+Control tips:
+
+- Click inside the phone screen once before typing.
+- Use mouse/pointer for tap and drag for swipe.
+- Use keyboard to type text into focused field on phone.
+- Use toolbar buttons for Home, Back, Volume Up/Down, Power.
+
+Stop session:
+
+- Click Stop in toolbar, or run command `adbMirror.stopMirror`.
+
+## Keyboard Input Notes
+
+- Typing from your PC keyboard sends text directly to Android input.
+- Paste is supported from clipboard.
+- Special keys are mapped to Android key events (for example Enter, Backspace, arrows).
+- If typing does not work, click the mirrored screen and try again.
+
+## Extension Settings
+
+Open VS Code Settings and search for `adbMirror`.
+
+- `adbMirror.scrcpyPath`: custom scrcpy executable path.
+- `adbMirror.adbFrameIntervalMs`: fallback frame interval (ms).
+- `adbMirror.scrcpyMaxSize`: maximum frame size.
+- `adbMirror.scrcpyMaxFps`: target FPS.
+- `adbMirror.scrcpyVideoBitRate`: scrcpy bitrate (for example `4M`, `8M`).
+- `adbMirror.autoRealtime`: start in realtime profile.
+
+Recommended low-latency values:
+
+- `scrcpyMaxSize = 540` or `720`
+- `scrcpyMaxFps = 60`
+- `scrcpyVideoBitRate = 4M` to `8M`
+
+### Recommended VS Code Settings (Windows)
+
+Add this to your VS Code `settings.json`:
+
+```json
+{
+  "adbMirror.scrcpyPath": "C:\\path\\to\\scrcpy\\scrcpy.exe",
+  "adbMirror.adbFrameIntervalMs": 30,
+  "adbMirror.scrcpyMaxFps": 120,
+  "adbMirror.scrcpyMaxSize": 360,
+  "adbMirror.scrcpyVideoBitRate": "2M",
+  "adbMirror.performancePreset": "Realtime"
+}
+```
+
+Note: if your current extension build does not expose `adbMirror.performancePreset` yet, the rest of the settings still apply.
 
 ## Troubleshooting
 
-### "No devices found"
+### No devices listed
 
-- Make sure USB debugging is enabled on your device
-- Try `adb devices` in terminal to verify ADB can see your device
-- Check that you have authorized the computer on your device
+- Run `adb devices` and confirm your device is present.
+- Reconnect cable or reconnect TCP device.
+- Accept the USB debugging authorization prompt on phone.
 
-### "Failed to start scrcpy"
+### Mirror view is blank or broken
 
-- Verify scrcpy is installed: `scrcpy --version`
-- Check if scrcpy is in your system PATH
-- Try running scrcpy manually first to ensure it works
+- Run `scrcpy --version` and verify scrcpy is installed.
+- The extension will fallback to ADB screencap if MJPEG is unavailable.
+- Reload VS Code window: `Developer: Reload Window`.
 
-### Screen not displaying / Connection issues
+### Keyboard typing is not working
 
-- Your scrcpy version may not support `--mjpeg-server` flag
-- Check scrcpy help for available flags
-- You may need to modify the `startScrcpy()` method in `mirrorPanel.ts`
-- Try running `scrcpy --help` to see available options in your version
+- Click once inside the mirrored phone screen.
+- Ensure a text field is focused on the phone.
+- Try paste (`Ctrl+V`) to confirm text pipeline is active.
 
-### Mirror is working but too slow
+### Activation errors about duplicate views/providers
 
-- Prefer scrcpy mode for best speed (install scrcpy and ensure it is in PATH)
-- Open VS Code Settings and tune these extension options:
-  - `adbMirror.scrcpyMaxSize` (try `720` or `540` for lower latency)
-  - `adbMirror.scrcpyMaxFps` (try `60`)
-  - `adbMirror.scrcpyVideoBitRate` (try `8M` to `12M`)
-  - `adbMirror.adbFrameIntervalMs` (fallback mode only; try `50`-`80`)
-- If using fallback mode, lower interval values increase speed but also CPU usage
+Examples:
 
-### ADB not found
+- `View provider for 'adbMirrorView' already registered`
+- `Cannot register multiple views with same id 'adbMirrorDevices'`
 
-- Make sure ADB is installed and in your system PATH
-- On Windows, ADB is typically part of Android SDK Platform-Tools
+Fix:
 
-## Development
+1. Run `Developer: Reload Window`.
+2. Ensure only one copy of this extension is enabled.
+3. If developing, stop old Extension Host windows before pressing `F5` again.
 
-### Project Structure
+## Commands
 
+- `adbMirror.refreshDevices`
+- `adbMirror.startMirror`
+- `adbMirror.stopMirror`
+- `adbMirror.sendHome`
+- `adbMirror.sendBack`
+- `adbMirror.sendVolumeUp`
+- `adbMirror.sendVolumeDown`
+- `adbMirror.sendPower`
+- `adbMirror.realtimeMode`
+
+## Project Structure
+
+```text
+src/
+  extension.ts           # extension activation and command registration
+  deviceProvider.ts      # device discovery and tree view
+  mirrorViewProvider.ts  # sidebar mirror webview + session logic
+  mirrorPanel.ts         # standalone panel mirror implementation
 ```
-adb-mirror/
-├── src/
-│   ├── extension.ts       # Entry point, registers commands and sidebar
-│   ├── deviceProvider.ts  # ADB device listing and tree view
-│   └── mirrorPanel.ts     # Webview panel and scrcpy integration
-├── media/
-│   └── icon.svg
-├── package.json
-└── tsconfig.json
-```
-
-### Build and Watch
-
-```bash
-# Compile once
-npm run compile
-
-# Watch for changes
-npm run watch
-```
-
-## Known Issues
-
-- scrcpy 3.x+ may have changed command-line options
-- MJPEG streaming may not work with newer scrcpy versions
-- Audio streaming is disabled (`--no-audio` flag)
-- The webview may show connection errors if scrcpy doesn't support the MJPEG server mode
 
 ## License
 
 MIT
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit issues and pull requests.
-
-## Credits
-
-- [scrcpy](https://github.com/Genymobile/scrcpy) - Display and control of Android devices
-- [ADB](https://developer.android.com/studio/command-line/adb) - Android Debug Bridge
-- [VS Code Extension API](https://code.visualstudio.com/api)

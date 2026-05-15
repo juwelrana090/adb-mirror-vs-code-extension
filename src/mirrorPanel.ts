@@ -1,12 +1,19 @@
 import * as vscode from "vscode";
-import { spawn, exec } from "child_process";
+import { spawn, exec, execFile } from "child_process";
 import { promisify } from "util";
 import * as http from "http";
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 type StreamMode = "unknown" | "scrcpy-mjpeg" | "adb-screencap";
-type PerformancePreset = "realtime" | "light" | "ultraLowLatency" | "maxSpeed" | "balanced" | "quality";
+type PerformancePreset =
+  | "realtime"
+  | "light"
+  | "ultraLowLatency"
+  | "maxSpeed"
+  | "balanced"
+  | "quality";
 
 interface ScrcpySupport {
   installed: boolean;
@@ -115,6 +122,9 @@ export class MirrorPanel {
         case "sendKeyEvent":
           await this.sendKeyEvent(Number(message.keyCode));
           break;
+        case "sendText":
+          await this.sendText(String(message.text));
+          break;
         case "refreshStream":
           if (this.streamMode === "adb-screencap") {
             await this.pushSingleFrame();
@@ -162,6 +172,67 @@ export class MirrorPanel {
       vscode.window.showErrorMessage(message);
       this.notifyWebview("error", message);
     }
+  }
+
+  async sendText(text: string): Promise<void> {
+    try {
+      if (!text) {
+        return;
+      }
+
+      await this.sendTextViaInput(text);
+    } catch (error) {
+      const message = `Failed to send text: ${String(error)}`;
+      vscode.window.showErrorMessage(message);
+      this.notifyWebview("error", message);
+    }
+  }
+
+  private async sendTextViaInput(text: string): Promise<void> {
+    // Keep input text stable across shells and adb by sending in chunks,
+    // translating spaces to %s, and preserving a literal % as \%.
+    const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    const lines = normalized.split("\n");
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.length > 0) {
+        for (const chunk of this.chunkTextForAdb(line, 180)) {
+          const escapedChunk = this.escapeTextForAdbInput(chunk);
+          await execFileAsync(
+            "adb",
+            ["-s", this.serial, "shell", "input", "text", escapedChunk],
+            {
+              timeout: 5000,
+              windowsHide: true,
+            },
+          );
+        }
+      }
+
+      // Recreate line breaks with ENTER to match direct typing behavior.
+      if (i < lines.length - 1) {
+        await this.sendKeyEvent(66);
+      }
+    }
+  }
+
+  private chunkTextForAdb(text: string, maxChunkLength: number): string[] {
+    const chunks: string[] = [];
+    for (let i = 0; i < text.length; i += maxChunkLength) {
+      chunks.push(text.slice(i, i + maxChunkLength));
+    }
+    return chunks;
+  }
+
+  private escapeTextForAdbInput(text: string): string {
+    // Escape order matters: preserve literal % first, then map spaces to %s.
+    return text
+      .replace(/\\/g, "\\\\")
+      .replace(/"/g, '\\"')
+      .replace(/'/g, "\\'")
+      .replace(/%/g, "\\%")
+      .replace(/ /g, "%s");
   }
 
   private async sendTap(
@@ -1035,7 +1106,7 @@ export class MirrorPanel {
 <body>
     <div class="app-container">
         <div class="stream-wrapper">
-            <div class="stream-container">
+            <div class="stream-container" id="streamContainer">
                 <div class="device-badge">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
@@ -1402,6 +1473,114 @@ export class MirrorPanel {
           touchCursor.classList.remove('active');
           pointerStart = null;
         });
+
+        // Direct keyboard input handling with batching to reduce adb command spam.
+        document.body.tabIndex = 0;
+        document.body.focus();
+
+        // Special keys mapping
+        const specialKeys = {
+          'Enter': 66, 'Backspace': 67, 'Tab': 61, 'Escape': 111,
+          'ArrowUp': 19, 'ArrowDown': 20, 'ArrowLeft': 21, 'ArrowRight': 22,
+          'Home': 3, 'End': 123, 'Delete': 67, 'Insert': 124,
+          'PageUp': 92, 'PageDown': 93,
+          'F1': 131, 'F2': 132, 'F3': 133, 'F4': 134, 'F5': 135,
+          'F6': 136, 'F7': 137, 'F8': 138, 'F9': 139, 'F10': 140,
+          'F11': 141, 'F12': 142
+        };
+
+        let pendingTextBuffer = '';
+        let pendingTextTimer = null;
+
+        function flushPendingText() {
+          if (!pendingTextBuffer) {
+            return;
+          }
+          vscode.postMessage({
+            command: 'sendText',
+            text: pendingTextBuffer
+          });
+          pendingTextBuffer = '';
+        }
+
+        function queueTextInput(text) {
+          if (!text) {
+            return;
+          }
+          pendingTextBuffer += text;
+          if (pendingTextTimer) {
+            clearTimeout(pendingTextTimer);
+          }
+          pendingTextTimer = setTimeout(() => {
+            flushPendingText();
+            pendingTextTimer = null;
+          }, 35);
+        }
+
+        window.addEventListener('blur', () => {
+          flushPendingText();
+        });
+
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState !== 'visible') {
+            flushPendingText();
+          }
+        });
+
+        document.addEventListener('paste', (event) => {
+          const pasted = event.clipboardData?.getData('text') || '';
+          if (!pasted) {
+            return;
+          }
+          queueTextInput(pasted);
+          event.preventDefault();
+          event.stopPropagation();
+        }, { capture: true });
+
+        // Capture ALL keyboard events at document level
+        document.addEventListener('keydown', (event) => {
+          // Skip if typing in a button or input
+          if (event.target.tagName === 'BUTTON' || event.target.tagName === 'INPUT') {
+            return;
+          }
+
+          // Check for special keys
+          if (specialKeys[event.key]) {
+            flushPendingText();
+            vscode.postMessage({
+              command: 'sendKeyEvent',
+              keyCode: specialKeys[event.key]
+            });
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+
+          // Handle space
+          if (event.key === ' ') {
+            queueTextInput(' ');
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+
+          // Handle single printable characters
+          if (event.key.length === 1) {
+            const charCode = event.key.charCodeAt(0);
+            if (charCode >= 33 && charCode <= 126) {
+              queueTextInput(event.key);
+              event.preventDefault();
+              event.stopPropagation();
+              return;
+            }
+          }
+        }, { capture: true, passive: false });
+
+        document.getElementById('streamContainer').addEventListener('pointerdown', () => {
+          document.body.focus();
+        });
+
+        statusText.textContent = 'Keyboard input ready';
     </script>
 </body>
 </html>`;
